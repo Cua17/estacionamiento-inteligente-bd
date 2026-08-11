@@ -11,7 +11,7 @@ imagen (una foto de prueba en vez de la cámara del Raspberry Pi).
 
 Uso:
     python scripts/simulacion_demo.py
-    python scripts/simulacion_demo.py --placa test_images/BGZ123.png --espacio A1
+    python scripts/simulacion_demo.py --placa test_images/C789GHJ.png --espacio A2
 """
 
 import argparse
@@ -39,7 +39,6 @@ MINUTOS_SIMULADOS_DE_ESTACIONAMIENTO = 47
 def leer_placa(ruta_imagen: Path) -> str:
     img = cv2.imread(str(ruta_imagen))
     gris = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    gris = cv2.resize(gris, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
     _, binaria = cv2.threshold(gris, 150, 255, cv2.THRESH_BINARY)
     texto = pytesseract.image_to_string(binaria, config=CONFIG_TESSERACT)
     return re.sub(r"[^A-Z0-9]", "", texto.upper())
@@ -52,11 +51,11 @@ def paso(mensaje):
 
 def main():
     parser = argparse.ArgumentParser(description="Simulación completa: entrada, ocupación y cobro")
-    parser.add_argument("--placa", default=None, help="Ruta a la imagen de la placa (default: BGZ123.png)")
+    parser.add_argument("--placa", default=None, help="Ruta a la imagen de la placa (default: foto real de referencia)")
     parser.add_argument("--espacio", default="A1", help="Etiqueta del espacio a ocupar (default: A1)")
     args = parser.parse_args()
 
-    ruta_imagen = Path(args.placa) if args.placa else CARPETA_IMAGENES / "BGZ123.png"
+    ruta_imagen = Path(args.placa) if args.placa else CARPETA_IMAGENES / "Placa_vehicular_de_Guatemala.png"
     etiqueta_espacio = args.espacio
 
     print("=" * 60)
@@ -117,8 +116,8 @@ def main():
     conexion.commit()
 
     print(f"\n   Tiempo estacionado: {minutos_totales} minutos")
-    print(f"   Tarifa aplicada: ₡{precio_por_hora}/hora")
-    print(f"   COBRO GENERADO: ₡{monto}")
+    print(f"   Tarifa aplicada: Q{precio_por_hora}/hora")
+    print(f"   COBRO GENERADO: Q{monto}")
     print(f"   Espacio '{etiqueta_espacio}' ahora está LIBRE de nuevo.")
 
     cursor.close()

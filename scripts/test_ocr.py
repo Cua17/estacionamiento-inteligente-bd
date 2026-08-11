@@ -22,17 +22,18 @@ CARPETA_IMAGENES = Path(__file__).resolve().parent.parent / "test_images"
 # Solo letras y números, una línea -> mismo criterio que se usará para placas reales.
 CONFIG_TESSERACT = "--psm 8 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
+# Para las placas generadas por generar_placas_prueba.py, el nombre del
+# archivo ES la placa esperada. La foto de referencia real no sigue esa
+# convención (tiene un nombre descriptivo), así que se mapea a mano acá.
+PLACA_ESPERADA_POR_ARCHIVO = {
+    "Placa_vehicular_de_Guatemala.png": "P123ABC",
+}
+
 
 def preprocesar(ruta_imagen: Path):
-    """Escala de grises + upscale + umbral -- mejora mucho la lectura de OCR.
-
-    El upscale (x2, interpolación cúbica) ayuda porque Tesseract fue entrenado
-    sobre texto escaneado a ~300 DPI; imágenes pequeñas capturadas por una
-    cámara quedan por debajo de eso y se leen peor sin este paso.
-    """
+    """Escala de grises + umbral -- mejora la lectura de OCR."""
     img = cv2.imread(str(ruta_imagen))
     gris = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    gris = cv2.resize(gris, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
     _, binaria = cv2.threshold(gris, 150, 255, cv2.THRESH_BINARY)
     return binaria
 
@@ -51,7 +52,7 @@ def main():
 
     aciertos = 0
     for ruta in imagenes:
-        esperado = ruta.stem.upper()  # nombre del archivo = placa esperada, sin espacios
+        esperado = PLACA_ESPERADA_POR_ARCHIVO.get(ruta.name, ruta.stem.upper())
         leido = leer_placa(ruta)
         ok = leido == esperado
         aciertos += ok

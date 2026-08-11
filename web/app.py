@@ -62,7 +62,7 @@ PLANTILLA = """
   <table>
     <tr><th>Últimos cobros</th><th>Placa</th><th>Minutos</th><th>Monto</th></tr>
     {% for c in cobros %}
-    <tr><td>{{ c.fecha }}</td><td>{{ c.placa }}</td><td>{{ c.minutos }} min</td><td>₡{{ c.monto }}</td></tr>
+    <tr><td>{{ c.fecha }}</td><td>{{ c.placa }}</td><td>{{ c.minutos }} min</td><td>Q{{ c.monto }}</td></tr>
     {% endfor %}
   </table>
 </body>

@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+
+# Guía privada para practicar la demo -- no es para el profesor, solo para mí
+DEMO.md
