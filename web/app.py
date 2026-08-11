@@ -8,6 +8,7 @@ Luego abrir http://localhost:5050 en el navegador.
 """
 
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from flask import Flask, render_template_string
@@ -42,6 +43,8 @@ PLANTILLA = """
   table { margin-top: 2.5rem; border-collapse: collapse; width: 100%; max-width: 700px; }
   th, td { text-align: left; padding: 0.5rem 1rem; border-bottom: 1px solid #334155; }
   th { color: #94a3b8; font-weight: normal; font-size: 0.85rem; }
+  h2 { font-size: 1rem; color: #cbd5e1; margin-top: 2.5rem; margin-bottom: 0; }
+  .vacio { color: #64748b; font-size: 0.9rem; margin-top: 0.5rem; }
 </style>
 </head>
 <body>
@@ -59,12 +62,29 @@ PLANTILLA = """
     {% endfor %}
   </div>
 
+  <h2>Vehículos adentro ahora mismo</h2>
+  {% if activas %}
   <table>
-    <tr><th>Últimos cobros</th><th>Placa</th><th>Minutos</th><th>Monto</th></tr>
+    <tr><th>Placa</th><th>Espacio</th><th>Entró a las</th><th>Minutos hasta ahora</th></tr>
+    {% for a in activas %}
+    <tr><td>{{ a.placa }}</td><td>{{ a.etiqueta }}</td><td>{{ a.hora_entrada }}</td><td>{{ a.minutos_transcurridos }} min</td></tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <div class="vacio">No hay vehículos estacionados ahora mismo.</div>
+  {% endif %}
+
+  <h2>Últimos cobros (sesiones ya cerradas)</h2>
+  {% if cobros %}
+  <table>
+    <tr><th>Hora</th><th>Placa</th><th>Minutos</th><th>Monto</th></tr>
     {% for c in cobros %}
     <tr><td>{{ c.fecha }}</td><td>{{ c.placa }}</td><td>{{ c.minutos }} min</td><td>Q{{ c.monto }}</td></tr>
     {% endfor %}
   </table>
+  {% else %}
+  <div class="vacio">Todavía no se cerró ninguna sesión.</div>
+  {% endif %}
 </body>
 </html>
 """
@@ -83,22 +103,45 @@ def index():
     """)
     espacios = cursor.fetchall()
 
+    # El tiempo transcurrido se calcula en Python (contra datetime.now()),
+    # NO con NOW() del servidor: hora_entrada se guarda con la hora local de
+    # quien corre el script, y el servidor de TiDB puede estar en otra zona
+    # horaria (UTC) -- comparar ahí daba minutos negativos o inflados.
     cursor.execute("""
-        SELECT DATE_FORMAT(c.fecha_cobro, '%H:%i:%s') AS fecha, s.placa,
-               c.minutos_totales AS minutos, c.monto
+        SELECT s.placa, e.etiqueta, s.hora_entrada
+        FROM sesiones s
+        JOIN espacios e ON e.id = s.espacio_id
+        WHERE s.estado = 'activa'
+        ORDER BY s.hora_entrada
+    """)
+    activas = cursor.fetchall()
+    ahora = datetime.now()
+    for a in activas:
+        a["minutos_transcurridos"] = max(0, round((ahora - a["hora_entrada"]).total_seconds() / 60))
+        a["hora_entrada"] = a["hora_entrada"].strftime("%H:%M:%S")
+
+    # hora_salida sí se guarda con la hora local de Python (igual que
+    # hora_entrada), así que se muestra esa en vez de fecha_cobro -- que es
+    # un TIMESTAMP puesto por el propio servidor de TiDB y puede estar en
+    # otro huso horario (ver el mismo comentario más arriba, en "activas").
+    cursor.execute("""
+        SELECT s.placa, s.hora_salida, c.minutos_totales AS minutos, c.monto
         FROM cobros c
         JOIN sesiones s ON s.id = c.sesion_id
         ORDER BY c.fecha_cobro DESC
         LIMIT 5
     """)
     cobros = cursor.fetchall()
+    for c in cobros:
+        c["fecha"] = c["hora_salida"].strftime("%H:%M:%S")
 
     cursor.close()
     conexion.close()
 
     libres = sum(1 for e in espacios if e["estado"] == "libre")
     return render_template_string(
-        PLANTILLA, espacios=espacios, cobros=cobros, libres=libres, total=len(espacios)
+        PLANTILLA, espacios=espacios, activas=activas, cobros=cobros,
+        libres=libres, total=len(espacios)
     )
 
 
