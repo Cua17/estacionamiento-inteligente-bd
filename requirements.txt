@@ -1,0 +1,6 @@
+mysql-connector-python==9.1.0
+python-dotenv==1.0.1
+certifi==2024.8.30
+opencv-python==4.10.0.84
+pytesseract==0.3.13
+Pillow==11.0.0
