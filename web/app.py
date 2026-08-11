@@ -4,7 +4,7 @@ leyendo directo de la base de datos. Se auto-refresca sola cada 3 segundos.
 
 Uso:
     python web/app.py
-Luego abrir http://localhost:5000 en el navegador.
+Luego abrir http://localhost:5050 en el navegador.
 """
 
 import sys
@@ -103,4 +103,4 @@ def index():
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    app.run(debug=False, port=5050)

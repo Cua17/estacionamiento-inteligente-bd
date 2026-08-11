@@ -54,6 +54,14 @@ Definida en [`schema.sql`](schema.sql), 5 tablas conectadas entre sí:
 Relaciones: `sesiones.placa → vehiculos.placa`, `sesiones.espacio_id → espacios.id`,
 `cobros.sesion_id → sesiones.id` (única, un cobro por sesión), `cobros.tarifa_id → tarifas.id`.
 
+## Infraestructura en la nube
+
+Este proyecto usa su **propio cluster de TiDB Cloud**, separado del cluster
+del proyecto de sismos del mismo curso:
+
+- Proyecto en TiDB Cloud: `estacionamiento-inteligente`
+- Cluster: `estacionamiento-db` (Starter, gratis, AWS Tokio)
+
 ## Instalación
 
 1. Crear la base de datos y las tablas:
