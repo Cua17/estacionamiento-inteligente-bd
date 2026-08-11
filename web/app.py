@@ -48,7 +48,7 @@ PLANTILLA = """
 </style>
 </head>
 <body>
-  <h1>🅿️ Estacionamiento Inteligente</h1>
+  <h1>Estacionamiento Inteligente</h1>
   <div class="subtitulo">Disponibilidad en tiempo real — se actualiza sola cada 3s</div>
   <div class="resumen"><b>{{ libres }}</b> de {{ total }} espacios disponibles</div>
 
