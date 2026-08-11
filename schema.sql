@@ -80,4 +80,4 @@ CREATE TABLE IF NOT EXISTS cobros (
 -- ─────────────────────────────────────────────────────────────────────────
 INSERT IGNORE INTO espacios (etiqueta) VALUES ('A1'), ('A2'), ('A3'), ('A4');
 
-INSERT IGNORE INTO tarifas (id, nombre, precio_por_hora) VALUES (1, 'Tarifa estándar', 1000.00);
+INSERT IGNORE INTO tarifas (id, nombre, precio_por_hora) VALUES (1, 'Tarifa estándar', 5.00);
