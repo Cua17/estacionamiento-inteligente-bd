@@ -13,6 +13,15 @@ const LECTURAS_FALLIDAS_PARA_AVISAR = 2;
 
 const $ = (id) => document.getElementById(id);
 
+/* Escribe solo si el valor cambió. Reescribir textContent con lo mismo cada
+   3 segundos igual cuenta como mutación del DOM, y en un nodo con aria-live
+   eso hace que un lector de pantalla vuelva a anunciar un dato que no se
+   movió. */
+function texto(id, valor) {
+  const nodo = $(id);
+  if (nodo && nodo.textContent !== String(valor)) nodo.textContent = valor;
+}
+
 let huellas = new Map();   // clave estable de renglón -> huella de su contenido
 let fallosSeguidos = 0;
 let ultimoExito = null;
@@ -103,9 +112,9 @@ function pintarEspacios(datos) {
   }).join("");
 
   const ocupados = datos.total - datos.libres;
-  $("nota-registro").textContent = ocupados === 0
+  texto("nota-registro", ocupados === 0
     ? "Ningún vehículo adentro"
-    : plural(ocupados, "vehículo adentro", "vehículos adentro");
+    : plural(ocupados, "vehículo adentro", "vehículos adentro"));
 }
 
 function pintarBitacora(datos) {
@@ -224,26 +233,26 @@ function pintarPie(datos) {
   const resto = Math.max(0, r.mes - r.dia);
   const sesionesResto = Math.max(0, r.sesiones_mes - r.sesiones_dia);
 
-  $("suma-dia").textContent = quetzales(r.dia);
-  $("suma-resto").textContent = quetzales(resto);
-  $("suma-mes").textContent = quetzales(r.mes);
+  texto("suma-dia", quetzales(r.dia));
+  texto("suma-resto", quetzales(resto));
+  texto("suma-mes", quetzales(r.mes));
 
-  $("detalle-dia").textContent = plural(r.sesiones_dia, "sesión cerrada", "sesiones cerradas");
-  $("detalle-resto").textContent = plural(sesionesResto, "sesión cerrada", "sesiones cerradas");
-  $("detalle-mes").textContent = plural(r.sesiones_mes, "sesión cerrada", "sesiones cerradas");
+  texto("detalle-dia", plural(r.sesiones_dia, "sesión cerrada", "sesiones cerradas"));
+  texto("detalle-resto", plural(sesionesResto, "sesión cerrada", "sesiones cerradas"));
+  texto("detalle-mes", plural(r.sesiones_mes, "sesión cerrada", "sesiones cerradas"));
 
-  $("procedencia").textContent =
+  texto("procedencia",
     `Los ${datos.totales.sesiones} registros de este libro los escribió el monitor ` +
     `(scripts/monitor.py) sobre ${plural(datos.totales.vehiculos, "placa distinta", "placas distintas")}. ` +
     `Mientras el sistema no esté instalado en el parqueo real, las sesiones provienen de pruebas: ` +
-    `los vehículos son de prueba, pero los tiempos y los montos los calculó el mismo código que se usará en producción.`;
+    `los vehículos son de prueba, pero los tiempos y los montos los calculó el mismo código que se usará en producción.`);
 }
 
 function pintarCabecera(datos) {
-  $("folio-fecha").textContent = fechaLarga();
-  $("folio-tarifa").textContent = datos.tarifa ? quetzales(datos.tarifa.precio_por_hora) : "sin definir";
-  $("saldo-libres").textContent = datos.libres;
-  $("saldo-total").textContent = datos.total;
+  texto("folio-fecha", fechaLarga());
+  texto("folio-tarifa", datos.tarifa ? quetzales(datos.tarifa.precio_por_hora) : "sin definir");
+  texto("saldo-libres", datos.libres);
+  texto("saldo-total", datos.total);
   document.querySelector(".saldo").classList.toggle("saldo--lleno", datos.libres === 0);
 }
 
@@ -253,17 +262,17 @@ function marcarConexion(viva, actualizado) {
   sello.classList.toggle("sello--caida", !viva);
 
   if (viva) {
-    $("sello-texto").textContent = `Leyendo de TiDB Cloud · última lectura ${actualizado}`;
+    texto("sello-texto", `Leyendo de TiDB Cloud · última lectura ${actualizado}`);
   } else {
     const desde = ultimoExito ? ` Último dato bueno: ${ultimoExito}.` : "";
-    $("sello-texto").textContent = `Sin conexión con la base de datos.${desde}`;
+    texto("sello-texto", `Sin conexión con la base de datos.${desde}`);
   }
 }
 
-function mostrarAviso(texto) {
+function mostrarAviso(mensaje) {
   const aviso = $("aviso");
-  if (!texto) { aviso.hidden = true; return; }
-  $("aviso-texto").textContent = texto;
+  if (!mensaje) { aviso.hidden = true; return; }
+  $("aviso-texto").textContent = mensaje;
   aviso.hidden = false;
 }
 

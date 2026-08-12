@@ -13,9 +13,13 @@ vehículo, cada sesión y cada quetzal es un asiento en un renglón reglado que
 se agrega y nunca se borra. Rechaza la retícula de tarjetas redondeadas con
 un número grande y un gráfico de líneas que este tipo de panel siempre trae.
 OWN-WORLD: Fondo tinta oscura con deriva verde (el fantasma del papel
-continuo rayado), bandas alternas apenas perceptibles, filetes de 1px como
-única estructura, cifras tabulares alineadas por columna, rojo de libro
-contable como única tinta de acento.
+continuo rayado), bandas alternas al 6% de delta y filetes reglados en los
+dos ejes —renglones firmes y columnas tenues— como única estructura de la
+página: no hay tarjetas. Cifras tabulares alineadas por columna y rojo de
+libro contable como única tinta de acento. El reglado va más firme de lo
+que se vería bien solo en una laptop porque esta pantalla se proyecta en un
+aula, donde el contraste real siempre baja; con bandas al 2% y filetes al
+10% la estructura desaparecía y quedaba texto flotando en negro.
 STORY: El evaluador entiende en segundos que hay una base de datos viva
 detrás, no una maqueta: ve el saldo de espacios, los asientos apareciendo y
 las sumas cuadrando.
@@ -146,7 +150,11 @@ finish review, the verdict, and DESIGN.md
 
     <p class="procedencia" id="procedencia"></p>
 
-    <p class="sello" aria-live="polite">
+    <!-- Sin aria-live: el texto trae la hora de la última lectura, que cambia
+         cada 3 segundos, así que un lector de pantalla la estaría anunciando
+         para siempre. La pérdida de conexión ya se anuncia por el .aviso,
+         que sí es role="alert" y solo aparece cuando algo falla. -->
+    <p class="sello">
       <span class="sello__punto" aria-hidden="true"></span>
       <span id="sello-texto">Conectando con la base de datos…</span>
     </p>

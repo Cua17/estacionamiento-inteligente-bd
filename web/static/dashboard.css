@@ -102,10 +102,15 @@ body {
   font-feature-settings: "tnum" 1, "lnum" 1;
 }
 
+/* El ritmo vertical está ajustado para que la cabecera, el registro de
+   espacios y el campo de horas entren juntos en una pantalla de 900px de
+   alto, que es lo que promete el FIRST VIEWPORT del contrato. Al subir la
+   escala de tipo para la proyección, el campo se caía por debajo del
+   pliegue; el espacio se recuperó de acá, no achicando la tipografía. */
 .hoja {
   max-width: 1180px;
   margin: 0 auto;
-  padding: calc(var(--paso) * 12) calc(var(--paso) * 8) calc(var(--paso) * 16);
+  padding: calc(var(--paso) * 8) calc(var(--paso) * 8) calc(var(--paso) * 16);
 }
 
 /* ── Cabecera del libro ───────────────────────────────────────────── */
@@ -189,7 +194,7 @@ body {
 
 /* ── Secciones ────────────────────────────────────────────────────── */
 
-.seccion { margin-top: calc(var(--paso) * 14); }
+.seccion { margin-top: calc(var(--paso) * 11); }
 
 .seccion__encabezado {
   display: flex;
@@ -250,8 +255,9 @@ body {
 .libro .num { text-align: right; }
 .libro .col-marca { width: 4px; padding: 0; }
 
-/* Banda alterna: el fantasma del papel continuo. Apenas perceptible, solo
-   lo suficiente para seguir un renglón largo con la vista. */
+/* Banda alterna: el fantasma del papel continuo. Lo justo para seguir un
+   renglón largo con la vista sin que compita con la tinta del texto, pero
+   con suficiente delta para sobrevivir a un proyector. */
 .libro tbody tr:nth-child(even) td { background: var(--tinta-banda); }
 
 /* La marca de margen es lo que distingue un asiento abierto de un renglón
@@ -414,11 +420,13 @@ body {
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
+/* Filete simple, no doble raya: esto es un subtotal de lo que se ve en
+   pantalla, no un total cerrado. La doble raya queda reservada para el
+   cierre del mes, que es el único total que de verdad cierra. */
 .pie-suma .total {
   color: var(--rojo);
   font-size: 1.25rem;
   letter-spacing: 0;
-  border-bottom: 3px double var(--filete-firme);
 }
 
 /* ── Sello de conexión ────────────────────────────────────────────── */
