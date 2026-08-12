@@ -1,20 +1,15 @@
 """
-Simulación de punta a punta: un vehículo "entra" al parqueo (usando una
-foto de placa de prueba, ya que todavía no hay cámara conectada), se le
-lee la placa por OCR, ocupa un espacio real en la base de datos en la
-nube, permanece un rato, "sale", y se calcula el cobro automáticamente.
+Simulación de punta a punta SIN cámara: un vehículo "entra" al parqueo
+usando una imagen de placa ya guardada, se le lee la placa por OCR, ocupa
+un espacio real en la base de datos, y al salir se calcula el cobro.
 
-De la placa hacia adelante, todo lo que hace este script es real: conecta
-a TiDB Cloud de verdad, escribe filas de verdad, calcula el cobro con la
-tarifa real guardada en la base. Lo único simulado es el origen de la
-imagen (una foto de prueba en vez de la cámara del Raspberry Pi).
+Toda la lógica de negocio vive en parqueo.py -- este script solo la maneja
+paso a paso para poder narrarla en vivo. El pipeline con cámara real
+(monitor.py) usa exactamente las mismas funciones.
 
-Por defecto, el tiempo estacionado es el tiempo REAL que pasa entre que
-arranca el script y presionás ENTER para cerrar la sesión -- si esperás
-2 minutos, cobra 2 minutos, sin trucos. Si para la demo no querés esperar
-mucho rato para que el cobro se vea significativo, se puede forzar una
-entrada retroactiva con --minutos (ej. --minutos 45 simula que el carro
-entró hace 45 minutos, sin que tengas que esperar 45 minutos de verdad).
+Por defecto el tiempo estacionado es el tiempo REAL entre que arranca el
+script y presionás ENTER. Para no esperar en una demo, --minutos fuerza
+una entrada retroactiva.
 
 Uso:
     python scripts/simulacion_demo.py
@@ -23,29 +18,14 @@ Uso:
 """
 
 import argparse
-import math
-import re
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
-import cv2
-import pytesseract
-
-from db import conectar
-
-pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-CONFIG_TESSERACT = "--psm 8 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+import parqueo
+from vision import leer_placa_de_archivo
 
 CARPETA_IMAGENES = Path(__file__).resolve().parent.parent / "test_images"
-
-
-def leer_placa(ruta_imagen: Path) -> str:
-    img = cv2.imread(str(ruta_imagen))
-    gris = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    _, binaria = cv2.threshold(gris, 150, 255, cv2.THRESH_BINARY)
-    texto = pytesseract.image_to_string(binaria, config=CONFIG_TESSERACT)
-    return re.sub(r"[^A-Z0-9]", "", texto.upper())
 
 
 def paso(mensaje):
@@ -67,78 +47,44 @@ def main():
     etiqueta_espacio = args.espacio
 
     print("=" * 60)
-    print(" SIMULACIÓN — Estacionamiento Inteligente")
+    print(" SIMULACION - Estacionamiento Inteligente")
     print("=" * 60)
 
-    paso(f"Cámara captura un vehículo ingresando (foto de prueba: {ruta_imagen.name})")
-    placa = leer_placa(ruta_imagen)
-    print(f"   Placa leída por OCR: {placa}")
+    paso(f"Camara captura un vehiculo ingresando (imagen: {ruta_imagen.name})")
+    placa = leer_placa_de_archivo(ruta_imagen)
+    print(f"   Placa leida por OCR: {placa}")
 
-    conexion = conectar()
-    cursor = conexion.cursor()
-
-    paso(f"Registrando vehículo '{placa}' en la base de datos (si es la primera vez que se ve)")
-    cursor.execute("INSERT IGNORE INTO vehiculos (placa) VALUES (%s)", (placa,))
-
-    paso(f"Verificando el espacio '{etiqueta_espacio}'")
-    cursor.execute("SELECT id, estado FROM espacios WHERE etiqueta = %s", (etiqueta_espacio,))
-    fila = cursor.fetchone()
-    if fila is None:
-        raise SystemExit(f"No existe el espacio '{etiqueta_espacio}'. Espacios disponibles: A1-A4.")
-    espacio_id, estado_actual = fila
-    if estado_actual == "ocupado":
-        raise SystemExit(f"El espacio '{etiqueta_espacio}' ya está ocupado. Elegí otro con --espacio.")
-    print(f"   Espacio libre. Se lo asigna a la placa {placa}.")
+    conexion = parqueo.conectar_parqueo()
 
     if args.minutos is not None:
         hora_entrada = datetime.now() - timedelta(minutes=args.minutos)
-        paso(f"Abriendo sesión de estacionamiento (entrada forzada hace {args.minutos} min con --minutos)")
+        paso(f"Abriendo sesion (entrada forzada hace {args.minutos} min con --minutos)")
     else:
-        hora_entrada = datetime.now()
-        paso("Abriendo sesión de estacionamiento (entrada AHORA -- el cobro va a usar el tiempo real que esperes)")
-    cursor.execute(
-        "INSERT INTO sesiones (placa, espacio_id, hora_entrada, estado) VALUES (%s, %s, %s, 'activa')",
-        (placa, espacio_id, hora_entrada),
-    )
-    sesion_id = cursor.lastrowid
-    cursor.execute("UPDATE espacios SET estado = 'ocupado' WHERE id = %s", (espacio_id,))
-    conexion.commit()
-    print(f"   Sesión #{sesion_id} abierta. Espacio '{etiqueta_espacio}' ahora está OCUPADO.")
-    print(f"   -> Revisá el dashboard web o el SQL Editor de TiDB: el espacio '{etiqueta_espacio}' ya cambió de estado.")
+        hora_entrada = None
+        paso("Abriendo sesion (entrada AHORA -- el cobro usara el tiempo real que esperes)")
 
-    input("\nPresioná ENTER para simular que el vehículo se retira y cerrar la sesión...")
+    try:
+        sesion_id = parqueo.abrir_sesion(conexion, placa, etiqueta_espacio, hora_entrada)
+    except (parqueo.EspacioNoExiste, parqueo.EspacioOcupado) as error:
+        raise SystemExit(f"{error} Proba con otro espacio usando --espacio.")
 
-    hora_salida = datetime.now()
-    # Igual que un parqueo real: se cobra el minuto en el que ya entraste,
-    # aunque sea parcial (ceil, no round) -- y siempre al menos 1 minuto.
-    minutos_totales = max(1, math.ceil((hora_salida - hora_entrada).total_seconds() / 60))
+    print(f"   Sesion #{sesion_id} abierta. Espacio '{etiqueta_espacio}' ahora esta OCUPADO.")
+    print("   -> Mira el dashboard: el espacio ya cambio de estado y aparece en 'adentro ahora mismo'.")
 
-    paso("Vehículo se retira. Cerrando sesión y calculando el cobro")
-    cursor.execute("SELECT id, precio_por_hora FROM tarifas WHERE vigente_hasta IS NULL ORDER BY vigente_desde DESC LIMIT 1")
-    tarifa_id, precio_por_hora = cursor.fetchone()
-    monto = round(float(precio_por_hora) * minutos_totales / 60, 2)
+    input("\nPresiona ENTER para simular que el vehiculo se retira y cerrar la sesion...")
 
-    cursor.execute(
-        "UPDATE sesiones SET hora_salida = %s, estado = 'cerrada' WHERE id = %s",
-        (hora_salida, sesion_id),
-    )
-    cursor.execute("UPDATE espacios SET estado = 'libre' WHERE id = %s", (espacio_id,))
-    cursor.execute(
-        "INSERT INTO cobros (sesion_id, tarifa_id, minutos_totales, monto) VALUES (%s, %s, %s, %s)",
-        (sesion_id, tarifa_id, minutos_totales, monto),
-    )
-    conexion.commit()
+    paso("Vehiculo se retira. Cerrando sesion y calculando el cobro")
+    minutos, monto, precio = parqueo.cerrar_sesion(conexion, sesion_id)
 
-    print(f"\n   Tiempo estacionado: {minutos_totales} minutos")
-    print(f"   Tarifa aplicada: Q{precio_por_hora}/hora")
+    print(f"\n   Tiempo estacionado: {minutos} minutos")
+    print(f"   Tarifa aplicada: Q{precio}/hora")
     print(f"   COBRO GENERADO: Q{monto}")
-    print(f"   Espacio '{etiqueta_espacio}' ahora está LIBRE de nuevo.")
+    print(f"   Espacio '{etiqueta_espacio}' ahora esta LIBRE de nuevo.")
 
-    cursor.close()
     conexion.close()
 
     print("\n" + "=" * 60)
-    print(" Simulación completa. Todo lo anterior quedó guardado en TiDB Cloud.")
+    print(" Simulacion completa. Todo quedo guardado en TiDB Cloud.")
     print("=" * 60)
 
 

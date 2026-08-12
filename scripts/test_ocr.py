@@ -1,26 +1,19 @@
 """
-Prueba de concepto de OCR de placas: aplica el mismo pipeline que se
-usará en la Raspberry Pi (aislar región -> preprocesar -> Tesseract)
-sobre las imágenes de test_images/, y compara el resultado leído contra
-el nombre esperado del archivo.
+Prueba de concepto de OCR: corre el pipeline de lectura de placas sobre
+las imágenes de test_images/ y compara contra la placa esperada.
+
+Muestra el resultado con y sin la corrección por formato, para poder medir
+cuánto aporta ese paso.
 
 Uso:
     python scripts/test_ocr.py
 """
 
-import re
 from pathlib import Path
 
-import cv2
-import pytesseract
-
-# En Windows, Tesseract no siempre queda en el PATH -> se apunta directo al exe.
-pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+from vision import formato_valido, leer_placa_de_archivo
 
 CARPETA_IMAGENES = Path(__file__).resolve().parent.parent / "test_images"
-
-# Solo letras y números, una línea -> mismo criterio que se usará para placas reales.
-CONFIG_TESSERACT = "--psm 8 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
 # Para las placas generadas por generar_placas_prueba.py, el nombre del
 # archivo ES la placa esperada. La foto de referencia real no sigue esa
@@ -30,36 +23,40 @@ PLACA_ESPERADA_POR_ARCHIVO = {
 }
 
 
-def preprocesar(ruta_imagen: Path):
-    """Escala de grises + umbral -- mejora la lectura de OCR."""
-    img = cv2.imread(str(ruta_imagen))
-    gris = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    _, binaria = cv2.threshold(gris, 150, 255, cv2.THRESH_BINARY)
-    return binaria
-
-
-def leer_placa(ruta_imagen: Path) -> str:
-    imagen_procesada = preprocesar(ruta_imagen)
-    texto = pytesseract.image_to_string(imagen_procesada, config=CONFIG_TESSERACT)
-    return re.sub(r"[^A-Z0-9]", "", texto.upper())
-
-
 def main():
     imagenes = sorted(CARPETA_IMAGENES.glob("*.png"))
     if not imagenes:
         print(f"No hay imágenes en {CARPETA_IMAGENES}. Correr primero generar_placas_prueba.py")
         return
 
-    aciertos = 0
+    aciertos_crudo = 0
+    aciertos_corregido = 0
+
+    print(f"{'ARCHIVO':<38} {'ESPERADO':<10} {'OCR CRUDO':<10} {'CORREGIDO':<10} RESULTADO")
+    print("-" * 88)
+
     for ruta in imagenes:
         esperado = PLACA_ESPERADA_POR_ARCHIVO.get(ruta.name, ruta.stem.upper())
-        leido = leer_placa(ruta)
-        ok = leido == esperado
-        aciertos += ok
-        estado = "OK " if ok else "FALLO"
-        print(f"[{estado}] esperado={esperado:10s} leido={leido:10s} archivo={ruta.name}")
+        crudo = leer_placa_de_archivo(ruta, corregir=False)
+        corregido = leer_placa_de_archivo(ruta, corregir=True)
 
-    print(f"\n{aciertos}/{len(imagenes)} placas leídas correctamente.")
+        aciertos_crudo += crudo == esperado
+        ok = corregido == esperado
+        aciertos_corregido += ok
+
+        print(f"{ruta.name:<38} {esperado:<10} {crudo:<10} {corregido:<10} {'OK' if ok else 'FALLO'}")
+
+    total = len(imagenes)
+    print("-" * 88)
+    print(f"Sin corrección por formato: {aciertos_crudo}/{total}")
+    print(f"Con corrección por formato: {aciertos_corregido}/{total}")
+
+    invalidas = [
+        ruta.name for ruta in imagenes
+        if not formato_valido(leer_placa_de_archivo(ruta))
+    ]
+    if invalidas:
+        print(f"\nLecturas que no calzan con el formato guatemalteco: {', '.join(invalidas)}")
 
 
 if __name__ == "__main__":

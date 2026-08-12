@@ -6,3 +6,10 @@ venv/
 
 # Guía privada para practicar la demo -- no es para el profesor, solo para mí
 DEMO.md
+
+# Las regiones de los espacios dependen de dónde esté puesta la cámara, así
+# que son de cada instalación: cada quien corre configurar_espacios.py.
+config_espacios.json
+
+# Herramientas de diseño
+.impeccable/
