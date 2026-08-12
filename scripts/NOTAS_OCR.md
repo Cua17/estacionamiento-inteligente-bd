@@ -12,14 +12,27 @@ Pipeline probado (el mismo que se usará en la Raspberry Pi):
 escala de grises → umbral binario → Tesseract OCR (`test_ocr.py`).
 
 ## Resultado
-**3 de 4 placas leídas correctamente (75%)**, incluyendo la foto real.
 
-| Placa esperada | Leída | Resultado |
-|---|---|---|
-| C789GHJ | C789GHJ | OK |
-| M234KLM | M234KLM | OK |
-| P123ABC (foto real) | P123ABC | OK |
-| P456DEF | PAS6DEF | Falló — confundió el número `4` con `A` y el `5` con `S` |
+| Placa esperada | OCR crudo | Con corrección | Resultado |
+|---|---|---|---|
+| C789GHJ | C789GHJ | C789GHJ | OK |
+| M234KLM | M234KLM | M234KLM | OK |
+| P123ABC (foto real) | P123ABC | P123ABC | OK |
+| P456DEF | PAS6DEF | P456DEF | OK tras corregir |
+
+**Sin corrección por formato: 3/4 (75%). Con corrección: 4/4 (100%).**
+
+La corrección está implementada en `vision.py` (`corregir_por_formato`) y es
+justamente la mitigación que la primera versión de estas notas dejó anotada
+como pendiente. Aprovecha que el formato guatemalteco es fijo: la posición 0
+y las posiciones 4 a 6 son siempre letras, y las posiciones 1 a 3 siempre
+dígitos. Si Tesseract devuelve `PAS6DEF`, se sabe que la `A` y la `S` caen en
+posiciones que deben ser numéricas, y se traducen a `4` y `5`.
+
+**No hay que sobrevender ese 100%**: son 4 imágenes, tres de ellas sintéticas
+y en condiciones ideales. Sirve para demostrar que el pipeline funciona y que
+el conocimiento del dominio mejora la precisión de forma medible; no para
+afirmar que el sistema acierta siempre en la calle.
 
 ## Dos problemas reales que aparecieron (y cómo se resolvieron)
 
@@ -38,25 +51,44 @@ escala de grises → umbral binario → Tesseract OCR (`test_ocr.py`).
    mandarlo a OCR, así que estas imágenes simulan justamente esa región ya
    recortada, sin marco.
 
-## Limitación que queda (no es un bug, es una limitación real de OCR)
+## La limitación de fondo (no es un bug, es cómo funciona el OCR)
 La confusión `4` ↔ `A` y `5` ↔ `S` es un problema documentado en
 reconocimiento de caracteres: son formas visualmente parecidas en fuentes
-bold, y depende de la fuente/cámara/resolución. Con fotos reales (más
-ruido, ángulo, luz) puede ser igual o más frecuente.
+bold, y depende de la fuente, la cámara y la resolución. Con fotos reales
+(más ruido, ángulo, luz) puede ser igual o más frecuente. La corrección por
+formato la compensa, pero no la elimina: si el OCR se equivoca en una
+posición donde el carácter equivocado también es válido —una letra por otra
+letra— el formato no lo puede detectar.
 
-## Cómo se piensa mitigar en fases siguientes
-- **Post-procesamiento por posición**: en el formato de placa guatemalteco
-  la primera posición siempre es letra y las siguientes 3 siempre son
-  dígitos — se puede forzar la corrección según la posición esperada.
-- **Mejor preprocesamiento** una vez haya fotos reales de la cámara:
-  probar distintos `--psm` de Tesseract y evaluar EasyOCR como alternativa
-  (modelo de deep learning en vez de reglas, suele ser más robusto en
-  fotos reales, aunque más pesado para correr en la Pi).
-- Validar el número de caracteres esperado (7) y re-intentar con otra
-  configuración si no calza.
+## Mitigaciones
 
-## Por qué igual se considera una prueba de concepto válida
-El objetivo de esta fase no era conseguir 100% de precisión, sino comprobar
-que el pipeline (imagen → preprocesamiento → Tesseract → texto) funciona de
-punta a punta, incluso con una foto real. Eso quedó demostrado. El tuning
-de precisión es trabajo de la Fase 4 en adelante, con fotos de la cámara.
+Ya implementadas en `vision.py`:
+
+- **Corrección por posición**: descrita arriba. Es lo que llevó el resultado
+  de 3/4 a 4/4.
+- **Validación de formato** (`formato_valido`): si la lectura no calza con
+  `[A-Z]\d{3}[A-Z]{3}`, el monitor la descarta y registra el vehículo como
+  `DESCONOCIDA` en vez de guardar una placa dudosa. Cobrarle a la placa
+  equivocada es peor que admitir que no se supo cuál era.
+
+Pendientes para cuando haya fotos de la cámara real:
+
+- Probar distintos `--psm` de Tesseract con imágenes con luz y ángulo
+  variables, y evaluar EasyOCR como alternativa (modelo de deep learning en
+  vez de reglas; suele ser más robusto en fotos reales, aunque más pesado
+  para correr en la Pi).
+- Tomar varias lecturas del mismo vehículo en cuadros seguidos y quedarse
+  con la que más se repita, en vez de confiar en una sola captura.
+
+## Qué quedó demostrado
+Que el pipeline (imagen → preprocesamiento → Tesseract → corrección → texto)
+funciona de punta a punta, incluso con una foto real, y que agregarle
+conocimiento del dominio —el formato de la placa guatemalteca— mejora la
+precisión de forma medible y reproducible. Lo que falta es validarlo con
+fotos tomadas por la cámara en el parqueo, con luz y ángulos variables.
+
+Para reproducir la medición:
+
+```bash
+python scripts/test_ocr.py
+```
