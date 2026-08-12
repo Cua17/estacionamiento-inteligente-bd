@@ -15,7 +15,6 @@
      diferencias sutiles: con 2% de delta desaparecía y la página dejaba de
      leerse como un libro reglado. */
   --tinta-banda: #171d1a;
-  --tinta-realce: #1b221e;
 
   /* Los tres niveles de tinta están medidos contra el fondo, no elegidos a
      ojo: 15.4:1, 8.1:1 y 4.8:1. El más tenue queda apenas por encima del
@@ -65,7 +64,7 @@ body {
 
 ::selection {
   background: var(--rojo-hondo);
-  color: #fff;
+  color: var(--tinta);
 }
 
 :focus-visible {
