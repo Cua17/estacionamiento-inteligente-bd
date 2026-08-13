@@ -8,7 +8,12 @@
   lo que cambió, y el renglón que cambia se puede asentar con un movimiento.
 */
 
-const INTERVALO_MS = 3000;
+// El servidor de la base está en Tokio: cada consulta tarda cerca de un
+// segundo, así que este intervalo es el DESCANSO entre una respuesta y la
+// siguiente pregunta, no un reloj fijo. Con un reloj fijo más corto que la
+// respuesta, las peticiones se encimaban y el tablero se atrasaba cada vez
+// más -- se veía como si tardara quince segundos en reaccionar.
+const INTERVALO_MS = 250;
 const LECTURAS_FALLIDAS_PARA_AVISAR = 2;
 
 const $ = (id) => document.getElementById(id);
@@ -240,12 +245,6 @@ function pintarPie(datos) {
   texto("detalle-dia", plural(r.sesiones_dia, "sesión cerrada", "sesiones cerradas"));
   texto("detalle-resto", plural(sesionesResto, "sesión cerrada", "sesiones cerradas"));
   texto("detalle-mes", plural(r.sesiones_mes, "sesión cerrada", "sesiones cerradas"));
-
-  texto("procedencia",
-    `Los ${datos.totales.sesiones} registros de este libro los escribió el monitor ` +
-    `(scripts/monitor.py) sobre ${plural(datos.totales.vehiculos, "placa distinta", "placas distintas")}. ` +
-    `Mientras el sistema no esté instalado en el parqueo real, las sesiones provienen de pruebas: ` +
-    `los vehículos son de prueba, pero los tiempos y los montos los calculó el mismo código que se usará en producción.`);
 }
 
 function pintarCabecera(datos) {
@@ -311,5 +310,13 @@ async function actualizar() {
   }
 }
 
-actualizar();
-setInterval(actualizar, INTERVALO_MS);
+/* Se encadena en vez de usar setInterval: así nunca hay dos consultas en
+   vuelo al mismo tiempo. Con setInterval, si la respuesta tarda más que el
+   intervalo, las peticiones se acumulan y cada una muestra datos más viejos
+   que la anterior. */
+async function cicloContinuo() {
+  await actualizar();
+  setTimeout(cicloContinuo, INTERVALO_MS);
+}
+
+cicloContinuo();

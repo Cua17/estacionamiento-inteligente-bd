@@ -25,7 +25,10 @@ Controles (con ventana):
 """
 
 import argparse
+import queue
+import threading
 import time
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
@@ -44,6 +47,9 @@ GRIS = (150, 150, 150)
 NEGRO = (0, 0, 0)
 
 SEGUNDOS_ENTRE_LECTURAS = 0.15
+
+# Cuántos cuadros extra se intentan leer si el primero no dio una placa válida.
+INTENTOS_DE_PLACA = 12
 
 
 def marca_de_tiempo():
@@ -73,6 +79,48 @@ def leer_placa_del_cuadro(cuadro, zona_placa=None):
 
     placa = leer_placa(recorte)
     return placa if formato_valido(placa) else None
+
+
+def leer_placa_rapido(cuadro, zona_placa=None):
+    """Versión liviana, pensada para correr sobre muchos cuadros seguidos."""
+    recorte = cuadro
+    if zona_placa:
+        x, y, ancho, alto = zona_placa
+        recorte = cuadro[y:y + alto, x:x + ancho]
+        if recorte.size == 0:
+            recorte = cuadro
+    placa = leer_placa(recorte, rapido=True)
+    return placa if formato_valido(placa) else None
+
+
+def leer_placa_por_consenso(obtener_cuadro, zona_placa, intentos=INTENTOS_DE_PLACA,
+                            coincidencias=2):
+    """
+    Solo da por buena una placa si la lee IGUAL en dos cuadros distintos.
+
+    Sin esto, el OCR devuelve la primera lectura que tenga forma de placa
+    (una letra, tres dígitos, tres letras) aunque sea ruido interpretado mal,
+    y el sistema termina inventando una placa que no se parece a la real.
+    Exigir que dos cuadros independientes coincidan descarta casi todo ese
+    ruido: acertar dos veces el mismo error es mucho menos probable que
+    acertarlo una.
+    """
+    votos = Counter()
+    for _ in range(intentos):
+        cuadro = obtener_cuadro()
+        if cuadro is None:
+            break
+        placa = leer_placa_rapido(cuadro, zona_placa)
+        if placa:
+            votos[placa] += 1
+            if votos[placa] >= coincidencias:
+                return placa
+        time.sleep(0.05)
+
+    if votos:
+        mejor, veces = votos.most_common(1)[0]
+        registrar(f"   lectura descartada por falta de consenso: '{mejor}' apareció {veces} vez/veces")
+    return None
 
 
 def dibujar_overlay(cuadro, resultados, espacios, zona_placa=None):
@@ -105,11 +153,14 @@ def dibujar_overlay(cuadro, resultados, espacios, zona_placa=None):
     return vista
 
 
-def procesar_cambio(conexion, etiqueta, ocupado, cuadro, zona_placa, placa_fija=None):
+def procesar_cambio(conexion, etiqueta, ocupado, cuadro, zona_placa,
+                    placa_fija=None, leer_placa_fn=None):
     """Traduce un cambio de estado confirmado en una operación de base de datos."""
     if ocupado:
         if placa_fija:
             placa = placa_fija
+        elif leer_placa_fn is not None:
+            placa = leer_placa_fn()
         else:
             placa = leer_placa_del_cuadro(cuadro, zona_placa) if cuadro is not None else None
         if placa is None:
@@ -144,6 +195,61 @@ def bucle_camara(args, conexion, espacios, zona_placa):
         f"{', '.join(ocupados_al_iniciar) if ocupados_al_iniciar else 'todos libres'}"
     )
 
+    # El OCR y la escritura en la base tardan cientos de milisegundos. Si eso
+    # corriera dentro del bucle de video, la imagen se congelaría cada vez que
+    # entra o sale un vehículo -- que es justo el momento en que uno quiere
+    # verla. Por eso el trabajo pesado se hace en un hilo aparte y el bucle
+    # de video nunca se bloquea.
+    trabajos = queue.Queue()
+    ultimo_cuadro = {"imagen": None}
+
+    def trabajador():
+        """
+        Escribe en la base los cambios que le manda el bucle de video.
+
+        Nunca descarta un cambio: cada entrada y cada salida se encolan y se
+        procesan en orden. (Antes se salteaban los cambios de un espacio que
+        ya tenía trabajo en curso, y eso hacía que una salida ocurrida
+        mientras se leía la placa se perdiera y el espacio quedara marcado
+        como ocupado hasta el siguiente ciclo completo.)
+        """
+        conexion_hilo = parqueo.conectar_parqueo()
+        try:
+            while True:
+                tarea = trabajos.get()
+                if tarea is None:
+                    return
+                etiqueta, ocupado, cuadro_del_cambio = tarea
+                try:
+                    inicio = time.monotonic()
+                    # El estado se escribe primero y sin esperar al OCR: el
+                    # tablero tiene que reaccionar al instante.
+                    procesar_cambio(conexion_hilo, etiqueta, ocupado, cuadro_del_cambio,
+                                    zona_placa, leer_placa_fn=lambda: None)
+                    registrar(f"   ({(time.monotonic() - inicio) * 1000:.0f} ms hasta la base de datos)")
+
+                    # Recién después, y solo si no hay más cambios esperando,
+                    # se intenta leer la placa. Si llega otro cambio mientras
+                    # tanto, tiene prioridad: el estado importa más que la placa.
+                    if ocupado and trabajos.empty():
+                        placa = leer_placa_rapido(cuadro_del_cambio, zona_placa)
+                        if placa and parqueo.actualizar_placa_de_sesion(
+                                conexion_hilo, etiqueta, placa):
+                            registrar(f"{etiqueta}: placa leída -> {placa}")
+                        elif not placa:
+                            registrar(f"{etiqueta}: placa no legible, queda DESCONOCIDA")
+                except Exception as error:
+                    # Un error puntual (ej. un hipo de red con la base de datos)
+                    # no debe tumbar el monitor: se avisa y se sigue.
+                    registrar(f"ERROR al procesar '{etiqueta}': {error}")
+                finally:
+                    trabajos.task_done()
+        finally:
+            conexion_hilo.close()
+
+    hilo = threading.Thread(target=trabajador, daemon=True)
+    hilo.start()
+
     try:
         while True:
             ok, cuadro = camara.read()
@@ -152,11 +258,13 @@ def bucle_camara(args, conexion, espacios, zona_placa):
                 time.sleep(1)
                 continue
 
+            ultimo_cuadro["imagen"] = cuadro
             resultados = evaluar_espacios(cuadro, espacios)
             for resultado in resultados:
                 cambio = estable.actualizar(resultado["etiqueta"], resultado["ocupado"])
                 if cambio is not None:
-                    procesar_cambio(conexion, resultado["etiqueta"], cambio, cuadro, zona_placa)
+                    registrar(f"{resultado['etiqueta']}: {'OCUPADO' if cambio else 'LIBRE'} detectado")
+                    trabajos.put((resultado["etiqueta"], cambio, cuadro.copy()))
 
             if not args.sin_ventana:
                 cv2.imshow("Monitor del parqueo  |  q=salir  p=leer placa",
@@ -170,6 +278,7 @@ def bucle_camara(args, conexion, espacios, zona_placa):
             else:
                 time.sleep(SEGUNDOS_ENTRE_LECTURAS)
     finally:
+        trabajos.put(None)
         camara.release()
         cv2.destroyAllWindows()
 

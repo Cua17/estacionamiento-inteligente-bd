@@ -144,36 +144,25 @@ body {
 .folio__sep { color: var(--tinta-tenue); margin: 0 0.4em; }
 
 .saldo {
-  display: grid;
-  grid-template-columns: auto auto;
-  grid-template-rows: auto auto;
+  display: flex;
   align-items: baseline;
-  column-gap: calc(var(--paso) * 3);
-  text-align: right;
+  flex-wrap: wrap;
+  gap: calc(var(--paso) * 1.5);
+  font-size: 1.375rem;
 }
 
-/* La cifra dominante: tiene que leerse desde el fondo de un aula. */
-.saldo__cifra {
-  grid-row: 1 / 3;
-  font-family: var(--serif);
-  font-size: 5.25rem;
+.saldo__cifra,
+.saldo__de,
+.saldo__rotulo {
+  font-size: 1.375rem;
   font-weight: 600;
-  line-height: 0.85;
-  letter-spacing: -0.04em;
   font-variant-numeric: tabular-nums lining-nums;
 }
 
-.saldo__de {
-  color: var(--tinta-media);
-  font-size: 1.0625rem;
-}
-
+.saldo__de,
 .saldo__rotulo {
-  grid-column: 2;
   color: var(--tinta-media);
-  font-size: 0.875rem;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  font-weight: 400;
 }
 
 /* Parqueo lleno: el saldo cero se entinta de rojo, no se queda igual. */
@@ -430,18 +419,11 @@ body {
 
 /* ── Sello de conexión ────────────────────────────────────────────── */
 
-.procedencia {
-  margin: calc(var(--paso) * 8) 0 0;
-  color: var(--tinta-tenue);
-  font-size: 0.875rem;
-  max-width: 70ch;
-}
-
 .sello {
   display: flex;
   align-items: center;
   gap: calc(var(--paso) * 2);
-  margin: calc(var(--paso) * 3) 0 0;
+  margin: calc(var(--paso) * 8) 0 0;
   color: var(--tinta-media);
   font-size: 0.875rem;
   letter-spacing: 0.04em;
@@ -472,7 +454,6 @@ body {
   .cabecera { align-items: flex-start; }
   .cabecera__titulo h1 { font-size: 1.5rem; }
   .saldo { text-align: left; }
-  .saldo__cifra { font-size: 4rem; }
   .sumas .monto-suma { font-size: 1.375rem; }
   .sumas .cierre .monto-suma { font-size: 1.75rem; }
 

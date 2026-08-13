@@ -72,6 +72,31 @@ def sesion_activa_de_espacio(cursor, espacio_id):
     return cursor.fetchone()
 
 
+def actualizar_placa_de_sesion(conexion, etiqueta_espacio, placa):
+    """
+    Cambia la placa de la sesión abierta de un espacio.
+
+    Existe porque el monitor abre la sesión apenas detecta el vehículo (para
+    que el tablero reaccione al instante) y sigue intentando leer la placa
+    unos segundos más. Cuando por fin la lee, corrige el registro.
+    """
+    cursor = conexion.cursor()
+    try:
+        espacio_id, _ = buscar_espacio(cursor, etiqueta_espacio)
+        sesion = sesion_activa_de_espacio(cursor, espacio_id)
+        if sesion is None:
+            return False
+        sesion_id, placa_actual, _ = sesion
+        if placa_actual == placa:
+            return False
+        registrar_vehiculo(cursor, placa)
+        cursor.execute("UPDATE sesiones SET placa = %s WHERE id = %s", (placa, sesion_id))
+        conexion.commit()
+        return True
+    finally:
+        cursor.close()
+
+
 def estado_actual_de_espacios(conexion):
     """
     Devuelve {etiqueta: True/False} según lo que dice la base de datos.

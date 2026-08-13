@@ -161,8 +161,15 @@ def totales_historicos(cursor):
     return {"vehiculos": int(vehiculos), "sesiones": int(sesiones)}
 
 
-def estado_completo(conexion):
-    """Arma de una sola conexión todo lo que el dashboard necesita mostrar."""
+def estado_completo(conexion, medios=None, lentos=None):
+    """
+    Arma todo lo que el dashboard necesita mostrar.
+
+    Cada consulta es un viaje de ida y vuelta al servidor en Tokio (~300 ms),
+    así que se pueden pasar ya calculadas las partes que no cambian en cada
+    refresco. Lo único que se consulta siempre es la ocupación de los
+    espacios, que es justo lo que tiene que verse al instante.
+    """
     cursor = conexion.cursor()
     try:
         lista_espacios = espacios(cursor)
@@ -170,13 +177,39 @@ def estado_completo(conexion):
             "espacios": lista_espacios,
             "libres": sum(1 for e in lista_espacios if not e["ocupado"]),
             "total": len(lista_espacios),
-            "movimientos": movimientos(cursor),
-            "recaudacion": recaudacion(cursor),
-            "ocupacion_por_hora": ocupacion_por_hora(cursor),
-            "tarifa": tarifa(cursor),
-            "totales": totales_historicos(cursor),
             "actualizado": datetime.now().strftime("%H:%M:%S"),
         }
+        datos.update(medios if medios is not None else partes_medias(conexion, cursor))
+        datos.update(lentos if lentos is not None else partes_lentas(conexion, cursor))
     finally:
         cursor.close()
     return datos
+
+
+def partes_medias(conexion, cursor=None):
+    """Cambian solo cuando entra o sale un vehículo."""
+    propio = cursor is None
+    cursor = cursor or conexion.cursor()
+    try:
+        return {
+            "movimientos": movimientos(cursor),
+            "recaudacion": recaudacion(cursor),
+        }
+    finally:
+        if propio:
+            cursor.close()
+
+
+def partes_lentas(conexion, cursor=None):
+    """Lo que se puede refrescar cada tantos segundos sin que se note."""
+    propio = cursor is None
+    cursor = cursor or conexion.cursor()
+    try:
+        return {
+            "ocupacion_por_hora": ocupacion_por_hora(cursor),
+            "tarifa": tarifa(cursor),
+            "totales": totales_historicos(cursor),
+        }
+    finally:
+        if propio:
+            cursor.close()
