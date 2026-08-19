@@ -94,7 +94,7 @@ def leer_placa_rapido(cuadro, zona_placa=None):
 
 
 def leer_placa_por_consenso(obtener_cuadro, zona_placa, intentos=INTENTOS_DE_PLACA,
-                            coincidencias=2):
+                            coincidencias=2, intentos_completos=4):
     """
     Solo da por buena una placa si la lee IGUAL en dos cuadros distintos.
 
@@ -104,13 +104,25 @@ def leer_placa_por_consenso(obtener_cuadro, zona_placa, intentos=INTENTOS_DE_PLA
     Exigir que dos cuadros independientes coincidan descarta casi todo ese
     ruido: acertar dos veces el mismo error es mucho menos probable que
     acertarlo una.
+
+    Los primeros `intentos - intentos_completos` intentos usan la lectura
+    rápida (menos variantes de binarización, para no atrasar el video). Si
+    ninguno logra consenso, los últimos `intentos_completos` cambian a la
+    lectura completa sobre cuadros frescos: más lenta por intento, pero
+    mucho más probable que acierte en cuadros difíciles (poca luz, placa
+    chica). Esto ya corre en el hilo aparte, así que el video no se ve
+    afectado.
     """
     votos = Counter()
-    for _ in range(intentos):
+    intentos_rapidos = max(0, intentos - intentos_completos)
+    for numero_intento in range(intentos):
         cuadro = obtener_cuadro()
         if cuadro is None:
             break
-        placa = leer_placa_rapido(cuadro, zona_placa)
+        if numero_intento < intentos_rapidos:
+            placa = leer_placa_rapido(cuadro, zona_placa)
+        else:
+            placa = leer_placa_del_cuadro(cuadro, zona_placa)
         if placa:
             votos[placa] += 1
             if votos[placa] >= coincidencias:
@@ -121,6 +133,26 @@ def leer_placa_por_consenso(obtener_cuadro, zona_placa, intentos=INTENTOS_DE_PLA
         mejor, veces = votos.most_common(1)[0]
         registrar(f"   lectura descartada por falta de consenso: '{mejor}' apareció {veces} vez/veces")
     return None
+
+
+CARPETA_DIAGNOSTICO = RAIZ / "debug_placas"
+
+
+def guardar_para_diagnostico(cuadro, etiqueta):
+    """
+    Guarda el cuadro en disco cuando una placa queda DESCONOCIDA.
+
+    Sirve para juntar ejemplos reales de fallas y revisarlos después
+    (¿placa muy chica?, ¿mala luz?, ¿mal recortada la zona_placa?). No se
+    sube a git (ver .gitignore) — son fotos del parqueo real.
+    """
+    if cuadro is None:
+        return
+    CARPETA_DIAGNOSTICO.mkdir(exist_ok=True)
+    marca = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ruta = CARPETA_DIAGNOSTICO / f"{etiqueta}_{marca}.png"
+    cv2.imwrite(str(ruta), cuadro)
+    registrar(f"   cuadro guardado para revisar: {ruta.name}")
 
 
 def dibujar_overlay(cuadro, resultados, espacios, zona_placa=None):
@@ -231,13 +263,23 @@ def bucle_camara(args, conexion, espacios, zona_placa):
                     # Recién después, y solo si no hay más cambios esperando,
                     # se intenta leer la placa. Si llega otro cambio mientras
                     # tanto, tiene prioridad: el estado importa más que la placa.
+                    #
+                    # Se usa leer_placa_por_consenso() en vez de un solo intento
+                    # sobre cuadro_del_cambio (que quedó estático en el instante
+                    # de la transición): pide varios cuadros FRESCOS a través de
+                    # ultimo_cuadro (que el bucle de video sigue actualizando) y
+                    # exige que la misma placa se repita antes de aceptarla. Un
+                    # solo intento sobre un cuadro fijo es lo que hacía que el
+                    # OCR le errara a los dígitos con cualquier frecuencia.
                     if ocupado and trabajos.empty():
-                        placa = leer_placa_rapido(cuadro_del_cambio, zona_placa)
+                        placa = leer_placa_por_consenso(
+                            lambda: ultimo_cuadro["imagen"], zona_placa)
                         if placa and parqueo.actualizar_placa_de_sesion(
                                 conexion_hilo, etiqueta, placa):
                             registrar(f"{etiqueta}: placa leída -> {placa}")
                         elif not placa:
-                            registrar(f"{etiqueta}: placa no legible, queda DESCONOCIDA")
+                            registrar(f"{etiqueta}: placa no legible tras varios intentos, queda DESCONOCIDA")
+                            guardar_para_diagnostico(ultimo_cuadro["imagen"], etiqueta)
                 except Exception as error:
                     # Un error puntual (ej. un hipo de red con la base de datos)
                     # no debe tumbar el monitor: se avisa y se sigue.

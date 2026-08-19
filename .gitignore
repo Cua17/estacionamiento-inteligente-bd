@@ -13,3 +13,7 @@ config_espacios.json
 
 # Herramientas de diseño
 .impeccable/
+
+# Fotos guardadas cuando una placa queda DESCONOCIDA (scripts/monitor.py) --
+# son capturas reales del parqueo, no van al repo.
+debug_placas/
