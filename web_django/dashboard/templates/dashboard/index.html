@@ -1,0 +1,183 @@
+{% load static %}<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Registro de Estacionamiento</title>
+<link rel="stylesheet" href="{% static 'dashboard/dashboard.css' %}">
+</head>
+<body>
+<!--
+THESIS: El parqueo es un libro de caja, no un panel de tarjetas. Cada
+vehículo, cada sesión y cada quetzal es un asiento en un renglón reglado que
+se agrega y nunca se borra. Rechaza la retícula de tarjetas redondeadas con
+un número grande y un gráfico de líneas que este tipo de panel siempre trae.
+OWN-WORLD: Fondo tinta oscura con deriva verde (el fantasma del papel
+continuo rayado), bandas alternas al 6% de delta y filetes reglados en los
+dos ejes —renglones firmes y columnas tenues— como única estructura de la
+página: no hay tarjetas. Cifras tabulares alineadas por columna y rojo de
+libro contable como única tinta de acento. El reglado va más firme de lo
+que se vería bien solo en una laptop porque esta pantalla se proyecta en un
+aula, donde el contraste real siempre baja; con bandas al 2% y filetes al
+10% la estructura desaparecía y quedaba texto flotando en negro.
+STORY: El evaluador entiende en segundos que hay una base de datos viva
+detrás, no una maqueta: ve el saldo de espacios, los asientos apareciendo y
+las sumas cuadrando.
+FIRST VIEWPORT: Cabecera de libro a la izquierda con folio del día; a la
+derecha el saldo de espacios libres como cifra dominante. Debajo, el
+registro de espacios en renglones reglados a todo lo ancho.
+FORM: Libro de caja / papel continuo. Candidato 5 de la lista ordenada.
+Semilla f2cf4f84.
+RAISE (de Factory Records, declinado): un solo campo domina el ancho de la
+página en vez de repartirla en tarjetas del mismo tamaño.
+RAISE (de buceo mesofótico, declinado): la ocupación por hora vive sobre un
+eje continuo de 24 horas, no en barras sueltas.
+RAISE (de tablero split-flap, competitivo): los renglones que cambian se
+asientan con un movimiento mecánico, y la escala de tipo aguanta la lectura
+proyectada en un aula.
+FINISH: unreviewed and undocumented is unfinished; this build ends with the
+finish review, the verdict, and DESIGN.md
+
+Adaptado a Django (login + roles): el HTML/CSS/JS es el mismo diseño de
+DESIGN.md sin cambios -- lo único nuevo son las condiciones por rol (ver
+más abajo) que ocultan tarifa/ocupación por hora/sumas para el rol
+Operador (ver dashboard/views.py, que ya omite esas claves del JSON para
+ese rol).
+-->
+
+<div class="hoja">
+
+  <header class="cabecera">
+    <div class="cabecera__titulo">
+      <h1>Registro de Estacionamiento</h1>
+      <p class="folio">
+        Folio <span id="folio-fecha">—</span>
+        {% if es_admin %}
+        <span class="folio__sep">·</span>
+        Tarifa <span id="folio-tarifa" class="cifra">—</span> por hora
+        {% endif %}
+      </p>
+    </div>
+
+    <p class="saldo" aria-live="polite">
+      <span class="saldo__cifra cifra" id="saldo-libres">—</span>
+      <span class="saldo__de">de <span class="cifra" id="saldo-total">—</span></span>
+      <span class="saldo__rotulo">espacios libres</span>
+    </p>
+  </header>
+
+  <div class="aviso" id="aviso" role="alert" hidden>
+    <span class="aviso__texto" id="aviso-texto"></span>
+  </div>
+
+  <section class="seccion" aria-labelledby="t-registro">
+    <div class="seccion__encabezado">
+      <h2 id="t-registro">Registro de espacios</h2>
+      <span class="seccion__nota" id="nota-registro"></span>
+    </div>
+
+    <table class="libro libro--espacios">
+      <thead>
+        <tr>
+          <th scope="col" class="col-marca"><span class="visualmente-oculto">Estado</span></th>
+          <th scope="col">Espacio</th>
+          <th scope="col">Placa</th>
+          <th scope="col" class="num">Desde</th>
+          <th scope="col" class="num">Tiempo</th>
+          <th scope="col" class="num">A cobrar</th>
+        </tr>
+      </thead>
+      <tbody id="cuerpo-espacios"></tbody>
+    </table>
+  </section>
+
+  {% if es_admin %}
+  <section class="seccion seccion--campo" aria-labelledby="t-ocupacion">
+    <div class="seccion__encabezado">
+      <h2 id="t-ocupacion">Ocupación por hora del día</h2>
+      <span class="seccion__nota">Sesiones simultáneas registradas en cada franja</span>
+    </div>
+    <div class="campo-horas" id="campo-horas"></div>
+  </section>
+  {% endif %}
+
+  <section class="seccion" aria-labelledby="t-bitacora">
+    <div class="seccion__encabezado">
+      <h2 id="t-bitacora">Bitácora de movimientos</h2>
+      <span class="seccion__nota">Entradas y salidas, lo más reciente primero</span>
+    </div>
+
+    <table class="libro libro--bitacora">
+      <thead>
+        <tr>
+          <th scope="col" class="col-marca"><span class="visualmente-oculto">Tipo</span></th>
+          <th scope="col" class="num">Hora</th>
+          <th scope="col">Movimiento</th>
+          <th scope="col">Placa</th>
+          <th scope="col">Espacio</th>
+          <th scope="col" class="num">Tiempo</th>
+          <th scope="col" class="num">Monto</th>
+        </tr>
+      </thead>
+      <tbody id="cuerpo-bitacora"></tbody>
+      <tfoot id="pie-bitacora"></tfoot>
+    </table>
+  </section>
+
+  <footer class="pie">
+    {% if es_admin %}
+    <table class="sumas">
+      <caption class="visualmente-oculto">Sumatoria de lo recaudado</caption>
+      <thead>
+        <tr>
+          <th scope="col">Concepto</th>
+          <th scope="col" class="num">Monto</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>
+            <span class="concepto">Recaudado hoy</span>
+            <span class="detalle" id="detalle-dia"></span>
+          </td>
+          <td class="monto-suma" id="suma-dia">—</td>
+        </tr>
+        <tr>
+          <td>
+            <span class="concepto">Recaudado el resto del mes</span>
+            <span class="detalle" id="detalle-resto"></span>
+          </td>
+          <td class="monto-suma" id="suma-resto">—</td>
+        </tr>
+        <tr class="cierre">
+          <td>
+            <span class="concepto">Total del mes</span>
+            <span class="detalle" id="detalle-mes"></span>
+          </td>
+          <td class="monto-suma" id="suma-mes">—</td>
+        </tr>
+      </tbody>
+    </table>
+    {% endif %}
+
+<!-- Sin aria-live: el texto trae la hora de la última lectura, que cambia
+         cada 3 segundos, así que un lector de pantalla la estaría anunciando
+         para siempre. La pérdida de conexión ya se anuncia por el .aviso,
+         que sí es role="alert" y solo aparece cuando algo falla. -->
+    <p class="sello">
+      <span class="sello__punto" aria-hidden="true"></span>
+      <span id="sello-texto">Conectando con la base de datos…</span>
+    </p>
+
+    <form action="{% url 'logout' %}" method="post" class="cierre-sesion">
+      {% csrf_token %}
+      <span class="folio">{{ request.user.username }} · {% if es_admin %}administrador{% else %}operador{% endif %}</span>
+      <button type="submit">Cerrar sesión</button>
+    </form>
+  </footer>
+
+</div>
+
+<script src="{% static 'dashboard/dashboard.js' %}"></script>
+</body>
+</html>

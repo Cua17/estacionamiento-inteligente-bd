@@ -1112,7 +1112,18 @@ python manage.py shell -c "
 from django.contrib.auth.models import Group, User
 u = User.objects.get(username='TU_USUARIO_SUPERUSER')
 u.groups.add(Group.objects.get(name='Admin'))
-u.is_staff = True   # hace falta para poder ENTRAR a /admin/, además de estar en el grupo
+u.is_staff = True
+# is_superuser, no solo is_staff+grupo: un grupo de Django NO trae permisos
+# solo, hay que asignarle explicitamente Permission por modelo o hacer
+# superuser al usuario. Se usa is_superuser porque es lo que necesita el
+# rol Admin de todas formas (gestionar espacios, tarifas Y usuarios desde
+# /admin/), y las restricciones de SesionAdmin/CobroAdmin (Tarea 3) son
+# overrides de código que devuelven False para TODOS, superuser incluido
+# -- no dependen del sistema de permisos, así que is_superuser no las
+# saltea. (Encontrado probando en vivo: promover solo con is_staff+grupo
+# entra a /admin/ pero muestra "no cuenta con permiso para ver ni editar
+# nada" -- el grupo por sí solo no alcanza.)
+u.is_superuser = True
 u.save()
 "
 ```

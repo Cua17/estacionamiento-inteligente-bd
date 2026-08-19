@@ -6,11 +6,15 @@ archivo se actualiza a mano.
 """
 
 from django.db import models
+from django.utils import timezone
 
 
 class Vehiculo(models.Model):
     placa = models.CharField(max_length=15, primary_key=True)
-    primera_deteccion = models.DateTimeField()
+    # default=timezone.now (no auto_now_add) porque schema.sql define
+    # DEFAULT CURRENT_TIMESTAMP, no algo que Django deba forzar en cada
+    # UPDATE -- coincide con lo que ya hacía la base antes de tener ORM.
+    primera_deteccion = models.DateTimeField(default=timezone.now)
     notas = models.CharField(max_length=255, null=True, blank=True)
 
     class Meta:
@@ -24,7 +28,7 @@ class Vehiculo(models.Model):
 class Espacio(models.Model):
     etiqueta = models.CharField(max_length=10, unique=True)
     estado = models.CharField(max_length=10)  # 'libre' | 'ocupado'
-    actualizado_en = models.DateTimeField()
+    actualizado_en = models.DateTimeField(default=timezone.now)
 
     class Meta:
         managed = False
@@ -38,7 +42,7 @@ class Espacio(models.Model):
 class Tarifa(models.Model):
     nombre = models.CharField(max_length=50)
     precio_por_hora = models.DecimalField(max_digits=8, decimal_places=2)
-    vigente_desde = models.DateTimeField()
+    vigente_desde = models.DateTimeField(default=timezone.now)
     vigente_hasta = models.DateTimeField(null=True, blank=True)
 
     class Meta:
@@ -75,7 +79,7 @@ class Cobro(models.Model):
     tarifa = models.ForeignKey(Tarifa, on_delete=models.DO_NOTHING, db_column="tarifa_id")
     minutos_totales = models.IntegerField()
     monto = models.DecimalField(max_digits=10, decimal_places=2)
-    fecha_cobro = models.DateTimeField()
+    fecha_cobro = models.DateTimeField(default=timezone.now)
 
     class Meta:
         managed = False

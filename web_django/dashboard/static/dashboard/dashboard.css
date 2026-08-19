@@ -1,0 +1,494 @@
+/*
+  Libro de caja, en tinta oscura.
+
+  La estructura de la página son filetes y columnas, no tarjetas: un libro
+  contable no agrupa en cajas redondeadas, alinea en renglones. Las cifras
+  van en figuras tabulares para que los dígitos se apilen columna sobre
+  columna, que es lo que hace legible un libro de verdad.
+*/
+
+:root {
+  /* Tinta y papel. El fondo no es negro puro: lleva una deriva verde que
+     recuerda al papel continuo rayado de las impresoras de reportes. */
+  --tinta-fondo: #0d100f;
+  /* La banda alterna tiene que sobrevivir a un proyector, que aplasta las
+     diferencias sutiles: con 2% de delta desaparecía y la página dejaba de
+     leerse como un libro reglado. */
+  --tinta-banda: #171d1a;
+
+  /* Los tres niveles de tinta están medidos contra el fondo, no elegidos a
+     ojo: 15.4:1, 8.1:1 y 4.8:1. El más tenue queda apenas por encima del
+     mínimo de 4.5:1, y eso importa el doble acá porque la pantalla se
+     proyecta en un aula, donde el contraste real siempre baja. */
+  --tinta: #e9e7df;
+  --tinta-media: #a3aba7;
+  --tinta-tenue: #7a827e;
+
+  /* Rojo de libro contable: la única tinta de acento. Marca lo que tiene
+     asiento abierto y lo que es dinero. */
+  --rojo: #e0685c;
+  --rojo-hondo: #b8463c;
+  --rojo-velo: rgba(224, 104, 92, 0.12);
+
+  /* Los filetes son la única estructura de la página: no hay tarjetas ni
+     cajas. Si se van en el proyector, queda texto flotando en negro, así
+     que van más firmes de lo que se vería bien solo en una laptop. */
+  --filete: rgba(233, 231, 223, 0.20);
+  --filete-firme: rgba(233, 231, 223, 0.36);
+  --filete-columna: rgba(233, 231, 223, 0.10);
+
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+  --sans: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+
+  --paso: 0.25rem;
+  --salida: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+*,
+*::before,
+*::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+/* La escala parte de 17px, no de los 15-16px habituales de un panel: esta
+   pantalla se proyecta en un aula y se lee de lejos. Nada baja de 13px. */
+body {
+  margin: 0;
+  background: var(--tinta-fondo);
+  color: var(--tinta);
+  font-family: var(--sans);
+  font-size: 1.0625rem;
+  line-height: 1.5;
+  caret-color: var(--rojo);
+}
+
+::selection {
+  background: var(--rojo-hondo);
+  color: var(--tinta);
+}
+
+:focus-visible {
+  outline: 2px solid var(--rojo);
+  outline-offset: 2px;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--filete-firme) transparent;
+}
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: var(--filete-firme);
+  border: 3px solid var(--tinta-fondo);
+  border-radius: 6px;
+}
+
+.visualmente-oculto {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Todas las cifras se apilan dígito sobre dígito, como en un libro. */
+.cifra,
+.libro td.num,
+.libro th.num {
+  font-variant-numeric: tabular-nums lining-nums;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+}
+
+/* El ritmo vertical está ajustado para que la cabecera, el registro de
+   espacios y el campo de horas entren juntos en una pantalla de 900px de
+   alto, que es lo que promete el FIRST VIEWPORT del contrato. Al subir la
+   escala de tipo para la proyección, el campo se caía por debajo del
+   pliegue; el espacio se recuperó de acá, no achicando la tipografía. */
+.hoja {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: calc(var(--paso) * 8) calc(var(--paso) * 8) calc(var(--paso) * 16);
+}
+
+/* ── Cabecera del libro ───────────────────────────────────────────── */
+
+.cabecera {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: calc(var(--paso) * 8);
+  padding-bottom: calc(var(--paso) * 6);
+  border-bottom: 2px solid var(--filete-firme);
+}
+
+.cabecera__titulo h1 {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 1.875rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.15;
+}
+
+.folio {
+  margin: calc(var(--paso) * 2) 0 0;
+  color: var(--tinta-media);
+  font-size: 0.9375rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.folio__sep { color: var(--tinta-tenue); margin: 0 0.4em; }
+
+.saldo {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: calc(var(--paso) * 1.5);
+  font-size: 1.375rem;
+}
+
+.saldo__cifra,
+.saldo__de,
+.saldo__rotulo {
+  font-size: 1.375rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.saldo__de,
+.saldo__rotulo {
+  color: var(--tinta-media);
+  font-weight: 400;
+}
+
+/* Parqueo lleno: el saldo cero se entinta de rojo, no se queda igual. */
+.saldo--lleno .saldo__cifra { color: var(--rojo); }
+
+/* ── Aviso de estado (error de conexión, base vacía) ──────────────── */
+
+.aviso {
+  margin-top: calc(var(--paso) * 6);
+  padding: calc(var(--paso) * 3) calc(var(--paso) * 4);
+  background: var(--rojo-velo);
+  border-top: 1px solid var(--rojo-hondo);
+  border-bottom: 1px solid var(--rojo-hondo);
+  color: var(--rojo);
+  font-size: 1rem;
+}
+
+/* ── Secciones ────────────────────────────────────────────────────── */
+
+.seccion { margin-top: calc(var(--paso) * 11); }
+
+.seccion__encabezado {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: calc(var(--paso) * 3);
+  margin-bottom: calc(var(--paso) * 3);
+}
+
+.seccion h2 {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--tinta);
+}
+
+.seccion__nota {
+  color: var(--tinta-tenue);
+  font-size: 0.875rem;
+}
+
+/* ── El libro: renglones reglados ─────────────────────────────────── */
+
+.libro {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 1.0625rem;
+}
+
+.libro th {
+  padding: calc(var(--paso) * 2) calc(var(--paso) * 3);
+  border-bottom: 1px solid var(--filete-firme);
+  color: var(--tinta-media);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-align: left;
+}
+
+.libro td {
+  padding: calc(var(--paso) * 3);
+  border-bottom: 1px solid var(--filete);
+  vertical-align: baseline;
+}
+
+/* Un libro reglado tiene rayas en los dos ejes, no solo renglones: los
+   filetes verticales son los que separan las columnas y hacen que una
+   cifra se lea contra la de arriba y no contra la de al lado. */
+.libro th:not(.col-marca):not(:last-child),
+.libro td:not(.col-marca):not(:last-child) {
+  border-right: 1px solid var(--filete-columna);
+}
+
+.libro .num { text-align: right; }
+.libro .col-marca { width: 4px; padding: 0; }
+
+/* Banda alterna: el fantasma del papel continuo. Lo justo para seguir un
+   renglón largo con la vista sin que compita con la tinta del texto, pero
+   con suficiente delta para sobrevivir a un proyector. */
+.libro tbody tr:nth-child(even) td { background: var(--tinta-banda); }
+
+/* La marca de margen es lo que distingue un asiento abierto de un renglón
+   en blanco: en un libro, la línea vacía simplemente no tiene tinta. */
+.marca { display: block; width: 4px; height: 100%; min-height: 3rem; }
+.marca--activa { background: var(--rojo); }
+
+.libro tr.ocupado .placa,
+.libro tr.ocupado .espacio { color: var(--tinta); }
+
+.libro tr.libre td { color: var(--tinta-tenue); }
+.libro tr.libre .espacio { color: var(--tinta-media); }
+
+.espacio {
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.placa {
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: 0.08em;
+}
+
+.placa--desconocida {
+  color: var(--tinta-tenue);
+  font-style: italic;
+  letter-spacing: 0.02em;
+}
+
+.monto { color: var(--rojo); font-variant-numeric: tabular-nums lining-nums; }
+.monto--nulo { color: var(--tinta-tenue); }
+
+.vacio {
+  color: var(--tinta-media);
+  font-size: 1rem;
+  padding: calc(var(--paso) * 6) calc(var(--paso) * 3);
+}
+.vacio strong { color: var(--tinta-media); font-weight: 600; }
+.vacio code {
+  color: var(--tinta-media);
+  font-family: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+  font-size: 0.8125em;
+}
+
+/* Movimiento de asiento: cuando un renglón cambia, se asienta. Un solo
+   momento, no efectos sueltos por todos lados. */
+@keyframes asentar {
+  from { background-color: var(--rojo-velo); transform: translateY(-2px); }
+  to   { background-color: transparent; transform: none; }
+}
+
+.libro tr.asentando td {
+  animation: asentar 260ms var(--salida);
+}
+
+/* ── Campo de ocupación por hora ──────────────────────────────────── */
+
+.seccion--campo .campo-horas {
+  border-bottom: 1px solid var(--filete-firme);
+}
+
+.campo-horas svg { display: block; width: 100%; height: auto; }
+
+/* Área continua, no barras sueltas: el eje de 24 horas es una sola línea de
+   tinta que sube y baja. Una hora sin sesiones es un valle sobre la base,
+   no un hueco: el parqueo existió a esa hora aunque estuviera vacío. */
+.campo-horas .area { fill: var(--rojo-velo); }
+.campo-horas .perfil {
+  fill: none;
+  stroke: var(--rojo);
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+.campo-horas .pico { fill: var(--rojo); }
+.campo-horas .guia { stroke: var(--filete-columna); stroke-width: 1; }
+.campo-horas .base { stroke: var(--filete-firme); stroke-width: 1; }
+.campo-horas .divisor-hora { stroke: var(--filete-columna); stroke-width: 1; }
+.campo-horas .marca-hora,
+.campo-horas .escala {
+  fill: var(--tinta-media);
+  font-size: 15px;
+  font-family: var(--sans);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+.campo-horas .marca-hora--viva { fill: var(--tinta); font-weight: 600; }
+
+/* ── Pie: las sumas ───────────────────────────────────────────────── */
+
+.pie {
+  margin-top: calc(var(--paso) * 14);
+  padding-top: calc(var(--paso) * 6);
+  border-top: 2px solid var(--filete-firme);
+}
+
+/* Bloque de sumatoria, no tres cifras sueltas: los conceptos van a la
+   izquierda y los montos alineados en una sola columna a la derecha, para
+   que los quetzales se apilen dígito sobre dígito y la suma se pueda seguir
+   con el dedo. Cierra con doble raya, como se cierra un total en un libro. */
+.sumas {
+  width: 100%;
+  max-width: 560px;
+  border-collapse: collapse;
+  margin: 0;
+}
+
+.sumas th {
+  padding: calc(var(--paso) * 2) 0;
+  border-bottom: 1px solid var(--filete-firme);
+  color: var(--tinta-media);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-align: left;
+}
+.sumas th.num { text-align: right; }
+
+.sumas td {
+  padding: calc(var(--paso) * 3) 0;
+  border-bottom: 1px solid var(--filete);
+}
+
+.sumas .concepto { color: var(--tinta); }
+.sumas .detalle {
+  display: block;
+  color: var(--tinta-tenue);
+  font-size: 0.875rem;
+}
+
+.sumas .monto-suma {
+  text-align: right;
+  font-family: var(--serif);
+  font-size: 1.75rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums lining-nums;
+  white-space: nowrap;
+}
+
+/* La doble raya del cierre: es literalmente cómo se cierra un total. */
+.sumas .cierre td {
+  border-bottom: 3px double var(--filete-firme);
+  border-top: 1px solid var(--filete-firme);
+  padding-top: calc(var(--paso) * 4);
+}
+.sumas .cierre .concepto {
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 0.9375rem;
+}
+.sumas .cierre .monto-suma { color: var(--rojo); font-size: 2.25rem; }
+
+.pie-suma td {
+  border-bottom: none;
+  border-top: 1px solid var(--filete-firme);
+  padding-top: calc(var(--paso) * 3);
+  color: var(--tinta-media);
+  font-size: 0.8125rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+/* Filete simple, no doble raya: esto es un subtotal de lo que se ve en
+   pantalla, no un total cerrado. La doble raya queda reservada para el
+   cierre del mes, que es el único total que de verdad cierra. */
+.pie-suma .total {
+  color: var(--rojo);
+  font-size: 1.25rem;
+  letter-spacing: 0;
+}
+
+/* ── Sello de conexión ────────────────────────────────────────────── */
+
+.sello {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--paso) * 2);
+  margin: calc(var(--paso) * 8) 0 0;
+  color: var(--tinta-media);
+  font-size: 0.875rem;
+  letter-spacing: 0.04em;
+}
+
+/* Conexión viva y conexión caída tienen que distinguirse de lejos, no solo
+   por el texto: viva es un punto hueco y quieto, caída es un punto rojo
+   lleno. Antes los dos eran del mismo rojo y se veían igual proyectados. */
+.sello__punto {
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  border: 2px solid var(--tinta-tenue);
+  background: transparent;
+  flex: none;
+}
+
+.sello--viva .sello__punto { border-color: var(--tinta-media); }
+.sello--caida { color: var(--rojo); }
+.sello--caida .sello__punto {
+  border-color: var(--rojo);
+  background: var(--rojo);
+}
+
+/* ── Cierre de sesión (agregado con el login de Django) ──────────── */
+
+.cierre-sesion {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--paso) * 4);
+  margin-top: calc(var(--paso) * 6);
+  padding-top: calc(var(--paso) * 4);
+  border-top: 1px solid var(--filete);
+}
+
+.cierre-sesion button {
+  background: none;
+  border: 1px solid var(--filete-firme);
+  color: var(--tinta-media);
+  font: inherit;
+  font-size: 0.875rem;
+  padding: calc(var(--paso) * 1.5) calc(var(--paso) * 3);
+  cursor: pointer;
+}
+
+.cierre-sesion button:hover { color: var(--tinta); border-color: var(--tinta-media); }
+
+/* ── Adaptación ───────────────────────────────────────────────────── */
+
+@media (max-width: 780px) {
+  .hoja { padding: calc(var(--paso) * 8) calc(var(--paso) * 4) calc(var(--paso) * 12); }
+  .cabecera { align-items: flex-start; }
+  .cabecera__titulo h1 { font-size: 1.5rem; }
+  .saldo { text-align: left; }
+  .sumas .monto-suma { font-size: 1.375rem; }
+  .sumas .cierre .monto-suma { font-size: 1.75rem; }
+
+  /* Se colapsan las columnas de detalle, no se encoge la tipografía:
+     en un panel operativo el tamaño de texto tiene que quedarse quieto. */
+  .libro--espacios th:nth-child(4),
+  .libro--espacios td:nth-child(4),
+  .libro--bitacora th:nth-child(6),
+  .libro--bitacora td:nth-child(6) { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .libro tr.asentando td { animation: none; }
+}

@@ -1,0 +1,39 @@
+{% load static %}<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Crear cuenta — Registro de Estacionamiento</title>
+<link rel="stylesheet" href="{% static 'dashboard/dashboard.css' %}">
+<link rel="stylesheet" href="{% static 'cuentas/cuentas.css' %}">
+</head>
+<body>
+<div class="hoja hoja--angosta">
+  <header class="cabecera">
+    <div class="cabecera__titulo">
+      <h1>Registro de Estacionamiento</h1>
+      <p class="folio">Crear cuenta nueva (rol: operador)</p>
+    </div>
+  </header>
+
+  {% if form.errors %}
+  <div class="aviso" role="alert">
+    <span class="aviso__texto">Revisá los datos del formulario e intentá de nuevo.</span>
+  </div>
+  {% endif %}
+
+  <form method="post" class="formulario-cuenta">
+    {% csrf_token %}
+    <label for="id_username">Usuario</label>
+    {{ form.username }}
+    <label for="id_password1">Contraseña</label>
+    {{ form.password1 }}
+    <label for="id_password2">Repetir contraseña</label>
+    {{ form.password2 }}
+    <button type="submit">Crear cuenta</button>
+  </form>
+
+  <p class="folio enlace-cuenta"><a href="{% url 'login' %}">Ya tengo cuenta</a></p>
+</div>
+</body>
+</html>

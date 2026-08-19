@@ -1,0 +1,53 @@
+/*
+  Pantallas de cuenta (login, registro): extienden dashboard.css con lo
+  mínimo para un formulario. Reusan las variables de color y tipografía
+  ya definidas ahí (ver DESIGN.md) -- no redefinen nada propio.
+*/
+
+.hoja--angosta {
+  max-width: 420px;
+  margin: 12vh auto 0;
+}
+
+.formulario-cuenta {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--paso) * 3);
+  margin-top: calc(var(--paso) * 6);
+}
+
+.formulario-cuenta label {
+  font-size: 0.875rem;
+  color: var(--tinta-media);
+}
+
+.formulario-cuenta input {
+  background: var(--tinta-banda);
+  border: 1px solid var(--filete);
+  color: var(--tinta);
+  padding: calc(var(--paso) * 2) calc(var(--paso) * 3);
+  font: inherit;
+  font-size: 1.0625rem;
+}
+
+.formulario-cuenta input:focus-visible {
+  border-color: var(--rojo);
+}
+
+.formulario-cuenta button {
+  margin-top: calc(var(--paso) * 2);
+  padding: calc(var(--paso) * 2.5);
+  background: var(--rojo-hondo);
+  color: var(--tinta);
+  border: none;
+  font: inherit;
+  cursor: pointer;
+}
+
+.formulario-cuenta button:hover { background: var(--rojo); }
+
+.enlace-cuenta {
+  margin-top: calc(var(--paso) * 4);
+}
+
+.enlace-cuenta a { color: var(--rojo); }
