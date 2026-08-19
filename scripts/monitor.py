@@ -35,7 +35,7 @@ from pathlib import Path
 import cv2
 
 import parqueo
-from camara import abrir_camara
+from camara import abrir_camara, hay_camara_pi
 from ocupacion import EstadoEstable, cargar_config, evaluar_espacios
 from vision import formato_valido, leer_placa, leer_placa_de_archivo
 
@@ -214,7 +214,10 @@ def procesar_cambio(conexion, etiqueta, ocupado, cuadro, zona_placa,
 
 
 def bucle_camara(args, conexion, espacios, zona_placa):
-    camara = abrir_camara(args.camara)
+    usar_pi_camera = args.camara_pi or hay_camara_pi()
+    if usar_pi_camera:
+        registrar("Usando la cámara CSI de la Raspberry Pi (picamera2).")
+    camara = abrir_camara(args.camara, usar_pi_camera=usar_pi_camera)
     estado_inicial = parqueo.estado_actual_de_espacios(conexion)
     estable = EstadoEstable(
         lecturas_para_confirmar=args.confirmaciones,
@@ -357,6 +360,9 @@ def bucle_simulado(conexion, espacios, zona_placa, placas_por_espacio):
 def main():
     parser = argparse.ArgumentParser(description="Monitor del parqueo: cámara -> ocupación -> base de datos")
     parser.add_argument("--camara", type=int, default=0, help="Índice de la cámara (default: 0)")
+    parser.add_argument("--camara-pi", action="store_true",
+                        help="Forzar el uso de la cámara CSI de la Raspberry Pi "
+                             "(por defecto se detecta sola)")
     parser.add_argument("--sin-ventana", action="store_true",
                         help="No abrir ventana de video (para correr por SSH en la Raspberry Pi)")
     parser.add_argument("--simular", action="store_true",
