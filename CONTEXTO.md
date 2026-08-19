@@ -34,18 +34,25 @@ skill `impeccable` y sigue vigente.
 |---|---|
 | 1. Diseño de la base de datos | ✅ Hecho |
 | 2. Estructura del repositorio | ✅ Hecho |
-| 3. Prueba de concepto de OCR | ✅ Hecho — ver `scripts/NOTAS_OCR.md` |
+| 3. Prueba de concepto de OCR | ✅ Hecho — ver `scripts/NOTAS_OCR.md` (ojo: el 4/4 documentado ahí es contra imágenes limpias, no cámara real) |
 | 4. Detección de ocupación | ✅ Hecho — funciona con webcam, probado en vivo |
 | 6. Sesiones y facturación | ✅ Hecho |
-| 7. Dashboard web | ✅ Hecho — rediseñado con la skill `impeccable`, ver `DESIGN.md` |
+| 7. Dashboard web | ✅ Hecho — **migrado de Flask a Django** el 18 de agosto, con login y roles (Admin/Operador). Ver `docs/superpowers/specs/2026-08-13-migracion-django-login-roles-design.md` y `docs/superpowers/plans/2026-08-13-django-dashboard-plan.md`. Verificado en vivo contra TiDB real. `web/` (Flask) todavía existe en paralelo hasta el corte final (Tarea 8 del plan) |
 | **0. Reset de la Raspberry Pi** | ✅ Hecho — 12 de agosto |
-| **5. Cámara en la Pi** | 🔲 **Pendiente — falta conseguir la cámara física** |
+| **5. Cámara en la Pi** | 🟡 **Código listo (`scripts/camara.py`, picamera2), falta el paso físico en la Pi** — ver `docs/superpowers/plans/2026-08-13-camara-pi-y-red-demo-plan.md` |
+| OCR en vivo por consenso | ✅ Hecho — 18 de agosto, ver `docs/superpowers/plans/2026-08-13-ocr-consenso-plan.md`. Bug real encontrado y arreglado (ver sección de bugs abajo) |
+| Red del día de la demo (hotspot) | 🔲 Pendiente — runbook listo, falta ejecutarlo con el celular a mano |
 | 8. Pruebas en el parqueo real | 🔲 Pendiente |
 | 9. Documentación y entrega final | 🔲 Pendiente |
 
-**La única pieza de hardware que falta es una cámara para la Pi.** Todo el
-software ya corre igual en la laptop (webcam) y en la Pi (probado el 12 de
-agosto: mismo código, mismo resultado de OCR 4/4, misma base de datos).
+**La única pieza de hardware que falta es conectar la cámara física a la
+Pi y probarla** (código ya escrito, sin poder verificarse desde una sesión
+sin acceso a la Pi). El resto del software (OCR con consenso, dashboard
+Django con roles) ya está implementado y probado contra la base de datos
+real.
+
+**Documento para entender todo el proyecto de punta a punta** (pensado
+para prepararse antes de la presentación): `GUIA_DE_ESTUDIO.md`.
 
 ## Infraestructura
 
@@ -104,8 +111,13 @@ parqueo.py   → abre/cierra sesiones, calcula el cobro (NO sabe nada de cámara
 TiDB Cloud · base `estacionamiento_db`
         │
         ▼
-web/app.py + reportes.py → dashboard en el navegador (localhost:5050)
+web_django/ (Django, ORM) → dashboard en el navegador (localhost:5051)
+   con login, roles (Admin/Operador) y panel /admin/
 ```
+
+`web/` (Flask) todavía existe con el mismo dashboard de solo lectura, sin
+login — se mantiene en paralelo hasta que `web_django/` quede confirmado
+como reemplazo definitivo (ver Tarea 8 del plan de Django).
 
 **Principio de diseño clave**: `parqueo.py` es el único que toca la base de
 datos para escribir. `monitor.py` corre en la Pi/laptop y escribe.
@@ -190,6 +202,18 @@ tiempo — vale la pena leerlos antes de tocar `monitor.py`, `db.py` o
    *forma* de placa válida aunque fuera ruido. Mitigado (parcialmente,
    revisar si hace falta reforzar) reescribiendo `vision.py` para probar
    varias binarizaciones y buscar el patrón dentro del texto crudo.
+6. **La lectura en vivo le erraba a los dígitos con frecuencia** (18 de
+   agosto): `monitor.py` tenía escrita `leer_placa_por_consenso()` (exige
+   que la misma placa se lea igual en dos cuadros distintos) pero **nunca
+   se llamaba** — la lectura real hacía un solo intento sobre un cuadro
+   estático con el pipeline reducido. Arreglado conectándola al hilo
+   trabajador usando `ultimo_cuadro` como fuente de cuadros frescos, con
+   fallback a lectura completa si la rápida no logra consenso. Además se
+   encontró (con `test_ocr.py`, sin relación a este bug) que la foto de
+   referencia real ahora falla un dígito (`P123ABC` → `P423ABC`) que la
+   corrección por formato no puede arreglar porque es un dígito mal leído
+   como *otro dígito*, no como una letra — pendiente de revisar con fotos
+   reales de la cámara de la Pi.
 
 **Limitación conocida, no es un bug**: la detección→dashboard tarda
 ~4 segundos de punta a punta. Es la latencia real de red a Tokio (varias
@@ -203,7 +227,15 @@ tiempo antes de la presentación).
 cd C:\Users\jdcua\dev\estacionamiento-inteligente-bd
 ```
 
-Dashboard (una terminal):
+Dashboard Django, con login y roles (una terminal):
+```bash
+cd web_django
+python manage.py runserver 5051
+```
+→ http://localhost:5051 (primera vez: `python manage.py crear_grupos` y
+crear una cuenta Admin, ver `GUIA_DE_ESTUDIO.md` sección 8)
+
+Dashboard viejo en Flask, sin login (todavía en paralelo):
 ```bash
 python web/app.py
 ```
@@ -214,6 +246,8 @@ Monitor con cámara (otra terminal):
 python scripts/configurar_espacios.py        # primera vez, o si se movió la cámara
 python scripts/monitor.py
 ```
+(en la Pi con la cámara CSI conectada, se detecta sola; `--camara-pi` la
+fuerza si hiciera falta)
 
 Sin cámara (para probar el motor de negocio solo):
 ```bash
