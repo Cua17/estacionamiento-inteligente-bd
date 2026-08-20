@@ -27,7 +27,7 @@ import sys
 
 import cv2
 
-from camara import abrir_camara
+from camara import abrir_camara, hay_camara_pi
 from ocupacion import ARCHIVO_CONFIG, UMBRAL_OCUPADO_POR_DEFECTO, evaluar_espacios, guardar_config
 
 VERDE = (74, 222, 128)
@@ -104,9 +104,11 @@ def main():
     parser.add_argument("--camara", type=int, default=0, help="Índice de la cámara (default: 0)")
     parser.add_argument("--rejilla", type=int, default=None,
                         help="Crea N espacios iguales automáticamente, sin dibujar con el mouse")
+    parser.add_argument("--camara-pi", action="store_true",
+                        help="Forzar el uso de la cámara CSI de la Raspberry Pi (por defecto se detecta sola)")
     args = parser.parse_args()
 
-    camara = abrir_camara(args.camara)
+    camara = abrir_camara(args.camara, usar_pi_camera=args.camara_pi or hay_camara_pi())
     ok, cuadro = camara.read()
     if not ok:
         camara.release()

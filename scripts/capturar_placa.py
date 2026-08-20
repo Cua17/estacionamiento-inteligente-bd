@@ -29,7 +29,7 @@ from pathlib import Path
 
 import cv2
 
-from camara import abrir_camara
+from camara import abrir_camara, hay_camara_pi
 from vision import formato_valido, leer_placa
 
 CARPETA_IMAGENES = Path(__file__).resolve().parent.parent / "test_images"
@@ -77,9 +77,11 @@ def main():
     parser.add_argument("--camara", type=int, default=0, help="Índice de la cámara (default: 0)")
     parser.add_argument("--continuo", action="store_true",
                         help="Lee continuamente en vez de esperar que aprietes ESPACIO")
+    parser.add_argument("--camara-pi", action="store_true",
+                        help="Forzar el uso de la cámara CSI de la Raspberry Pi (por defecto se detecta sola)")
     args = parser.parse_args()
 
-    camara = abrir_camara(args.camara)
+    camara = abrir_camara(args.camara, usar_pi_camera=args.camara_pi or hay_camara_pi())
     ok, cuadro = camara.read()
     if not ok:
         camara.release()
