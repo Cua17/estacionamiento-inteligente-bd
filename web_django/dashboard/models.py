@@ -53,6 +53,35 @@ class Tarifa(models.Model):
         return f"{self.nombre} (Q{self.precio_por_hora}/h)"
 
 
+class TarifaTramo(models.Model):
+    """
+    Un escalón del cobro: 'desde este minuto, la hora vale tanto'.
+
+    Rige hasta que empieza el tramo siguiente; el último queda abierto.
+    Ver el cálculo en scripts/parqueo.py::calcular_monto_por_tramos.
+    """
+
+    tarifa = models.ForeignKey(
+        Tarifa, on_delete=models.DO_NOTHING, db_column="tarifa_id",
+        related_name="tramos",
+    )
+    desde_minuto = models.IntegerField(
+        help_text="Desde qué minuto acumulado aplica este precio (0 = desde que entra)")
+    precio_por_hora = models.DecimalField(
+        max_digits=8, decimal_places=2,
+        help_text="Precio por hora dentro de este tramo. 0.00 = gratis")
+
+    class Meta:
+        managed = False
+        db_table = "tarifa_tramos"
+        ordering = ["desde_minuto"]
+
+    def __str__(self):
+        if float(self.precio_por_hora) == 0:
+            return f"desde {self.desde_minuto} min: gratis"
+        return f"desde {self.desde_minuto} min: Q{self.precio_por_hora}/hora"
+
+
 class Sesion(models.Model):
     placa = models.CharField(max_length=15)
     espacio = models.ForeignKey(

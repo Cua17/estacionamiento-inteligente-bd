@@ -64,12 +64,32 @@ function fechaLarga() {
 }
 
 /* Cobro acumulado de una sesión que sigue abierta: lo que pagaría si el
-   vehículo saliera en este momento. Se cobra el minuto empezado, igual que
-   en parqueo.py, para que la pantalla no prometa un número distinto al que
-   la base va a guardar. */
-function cobroCorrido(minutos, precioPorHora) {
-  if (minutos === null || precioPorHora === null) return null;
-  return (Math.max(1, Math.ceil(minutos)) * precioPorHora) / 60;
+   vehículo saliera en este momento. Se cobra el minuto empezado y se aplica
+   el escalonado por tramos, igual que en parqueo.py, para que la pantalla no
+   prometa un número distinto al que la base va a guardar.
+
+   Espejo exacto de calcular_monto_por_tramos(): si uno de los dos cambia,
+   el otro tiene que cambiar igual. */
+function cobroCorrido(minutos, tarifa) {
+  if (minutos === null || !tarifa) return null;
+  const cobrables = Math.max(1, Math.ceil(minutos));
+  const tramos = tarifa.tramos || [];
+
+  if (!tramos.length) {
+    // Tarifa sin tramos cargados: precio plano, mismo respaldo que parqueo.py
+    if (tarifa.precio_por_hora === null) return null;
+    return (cobrables * tarifa.precio_por_hora) / 60;
+  }
+
+  let total = 0;
+  tramos.forEach((tramo, i) => {
+    const siguiente = i + 1 < tramos.length ? tramos[i + 1].desde_minuto : null;
+    const fin = siguiente === null ? cobrables : Math.min(cobrables, siguiente);
+    if (fin > tramo.desde_minuto) {
+      total += (tramo.precio_por_hora * (fin - tramo.desde_minuto)) / 60;
+    }
+  });
+  return total;
 }
 
 function marcarSiCambio(clave, huella) {
@@ -89,7 +109,7 @@ function celdaPlaca(placa) {
 
 function pintarEspacios(datos) {
   const cuerpo = $("cuerpo-espacios");
-  const precio = datos.tarifa ? datos.tarifa.precio_por_hora : null;
+  const tarifa = datos.tarifa || null;
 
   if (!datos.espacios.length) {
     cuerpo.innerHTML = `<tr><td colspan="6" class="vacio">
@@ -99,7 +119,7 @@ function pintarEspacios(datos) {
   }
 
   cuerpo.innerHTML = datos.espacios.map((espacio) => {
-    const cobro = espacio.ocupado ? cobroCorrido(espacio.minutos, precio) : null;
+    const cobro = espacio.ocupado ? cobroCorrido(espacio.minutos, tarifa) : null;
     const clase = marcarSiCambio(
       "e:" + espacio.etiqueta,
       [espacio.ocupado, espacio.placa, espacio.desde].join("|"),

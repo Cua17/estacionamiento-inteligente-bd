@@ -6,7 +6,7 @@ tarifas y usuarios -- sin construir pantallas propias para eso.
 from django.contrib import admin
 from django.utils import timezone
 
-from .models import Cobro, Espacio, Sesion, Tarifa, Vehiculo
+from .models import Cobro, Espacio, Sesion, Tarifa, TarifaTramo, Vehiculo
 
 
 @admin.register(Espacio)
@@ -55,9 +55,34 @@ class CobroAdmin(admin.ModelAdmin):
         return False
 
 
+class TarifaTramoInline(admin.TabularInline):
+    """
+    Los tramos se editan dentro de la tarifa, no como una lista aparte: un
+    tramo suelto no significa nada sin saber a qué tarifa pertenece.
+    """
+    model = TarifaTramo
+    extra = 1
+    ordering = ["desde_minuto"]
+
+
 @admin.register(Tarifa)
 class TarifaAdmin(admin.ModelAdmin):
-    list_display = ["nombre", "precio_por_hora", "vigente_desde", "vigente_hasta"]
+    list_display = ["nombre", "precio_por_hora", "escalonado", "vigente_desde", "vigente_hasta"]
+    inlines = [TarifaTramoInline]
+
+    @admin.display(description="Escalonado")
+    def escalonado(self, obj):
+        """Resumen legible de los tramos, para no tener que abrir cada tarifa."""
+        tramos = list(obj.tramos.all())
+        if not tramos:
+            return "precio plano"
+        partes = []
+        for indice, tramo in enumerate(tramos):
+            siguiente = tramos[indice + 1].desde_minuto if indice + 1 < len(tramos) else None
+            rango = f"{tramo.desde_minuto}-{siguiente}" if siguiente else f"{tramo.desde_minuto}+"
+            precio = "gratis" if float(tramo.precio_por_hora) == 0 else f"Q{tramo.precio_por_hora}"
+            partes.append(f"{rango} min: {precio}")
+        return " · ".join(partes)
 
     def save_model(self, request, obj, form, change):
         """

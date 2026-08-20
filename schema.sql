@@ -42,6 +42,32 @@ CREATE TABLE IF NOT EXISTS tarifas (
 );
 
 -- ─────────────────────────────────────────────────────────────────────────
+-- 3b) TARIFA_TRAMOS: el precio escalonado de cada tarifa.
+--
+-- Un parqueo real no cobra un precio plano: da unos minutos de gracia y
+-- después sube el precio por hora mientras más tiempo se queda el vehículo.
+-- Cada fila dice "desde este minuto, la hora vale tanto", y rige hasta que
+-- empieza el tramo siguiente; el último queda abierto.
+--
+-- Está en su propia tabla (y no como columnas de `tarifas`) porque la
+-- cantidad de tramos es variable: una tarifa puede tener dos escalones y
+-- otra cinco. Así también queda historial: al cerrar una tarifa, sus tramos
+-- se conservan y un cobro viejo se puede seguir explicando.
+-- ─────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS tarifa_tramos (
+    id                  INT           NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    tarifa_id           INT           NOT NULL,
+    desde_minuto        INT           NOT NULL,   -- desde qué minuto acumulado aplica
+    precio_por_hora     DECIMAL(8,2)  NOT NULL,   -- 0.00 = tramo gratis
+
+    FOREIGN KEY (tarifa_id) REFERENCES tarifas(id),
+
+    -- Dos tramos de la misma tarifa no pueden empezar en el mismo minuto:
+    -- sería ambiguo cuál precio aplicar.
+    UNIQUE KEY uq_tarifa_desde (tarifa_id, desde_minuto)
+);
+
+-- ─────────────────────────────────────────────────────────────────────────
 -- 4) SESIONES: cada vez que una placa ocupa un espacio, de entrada a salida.
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS sesiones (
@@ -80,4 +106,13 @@ CREATE TABLE IF NOT EXISTS cobros (
 -- ─────────────────────────────────────────────────────────────────────────
 INSERT IGNORE INTO espacios (etiqueta) VALUES ('A1'), ('A2'), ('A3'), ('A4');
 
+-- precio_por_hora queda como precio de referencia de la tarifa (el del
+-- tramo principal); el cobro real se calcula con tarifa_tramos.
 INSERT IGNORE INTO tarifas (id, nombre, precio_por_hora) VALUES (1, 'Tarifa estándar', 5.00);
+
+-- Escalonado: 15 min de gracia, después el precio por hora va subiendo.
+INSERT IGNORE INTO tarifa_tramos (tarifa_id, desde_minuto, precio_por_hora) VALUES
+    (1,   0,  0.00),   -- primeros 15 minutos: gratis
+    (1,  15,  5.00),   -- de 15 min a 1 hora
+    (1,  60,  7.00),   -- segunda hora
+    (1, 120, 10.00);   -- de la tercera hora en adelante

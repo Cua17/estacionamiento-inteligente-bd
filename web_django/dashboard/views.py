@@ -126,7 +126,19 @@ def datos_tarifa():
     tarifa = Tarifa.objects.filter(vigente_hasta__isnull=True).order_by("-vigente_desde").first()
     if tarifa is None:
         return None
-    return {"nombre": tarifa.nombre, "precio_por_hora": float(tarifa.precio_por_hora)}
+    # Los tramos van en la respuesta para que el navegador pueda estimar el
+    # "a cobrar" de una sesión abierta con la MISMA regla que usa parqueo.py
+    # al cerrarla. Si la pantalla calculara distinto, prometería un número
+    # que después no coincide con el que se guarda en la base.
+    tramos = [
+        {"desde_minuto": tramo.desde_minuto, "precio_por_hora": float(tramo.precio_por_hora)}
+        for tramo in tarifa.tramos.all()
+    ]
+    return {
+        "nombre": tarifa.nombre,
+        "precio_por_hora": float(tarifa.precio_por_hora),
+        "tramos": tramos,
+    }
 
 
 def datos_totales():

@@ -124,6 +124,25 @@ def tarifa_vigente(cursor):
     return fila
 
 
+def tramos_de_tarifa(cursor, tarifa_id):
+    """
+    Los tramos escalonados de una tarifa, ordenados por minuto de inicio.
+
+    Devuelve [(desde_minuto, precio_por_hora), ...] listo para
+    calcular_monto_por_tramos(). Si la tarifa no tiene tramos cargados,
+    devuelve lista vacía y quien llama decide qué hacer (ver cerrar_sesion:
+    cae de vuelta al precio plano, para que una base vieja sin la tabla
+    nueva siga cobrando en vez de romperse).
+    """
+    cursor.execute("""
+        SELECT desde_minuto, precio_por_hora
+        FROM tarifa_tramos
+        WHERE tarifa_id = %s
+        ORDER BY desde_minuto
+    """, (tarifa_id,))
+    return [(int(desde), float(precio)) for desde, precio in cursor.fetchall()]
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Operaciones
 # ─────────────────────────────────────────────────────────────────────
@@ -160,13 +179,51 @@ def abrir_sesion(conexion, placa, etiqueta_espacio, hora_entrada=None):
 
 def calcular_monto(precio_por_hora, minutos):
     """
-    Cobro = tarifa por hora prorrateada a los minutos usados.
+    Cobro con una tarifa plana: precio por hora prorrateado a los minutos.
 
     Se usa ceil (no round) y mínimo 1 minuto, igual que un parqueo real:
     el minuto empezado se cobra completo.
+
+    Se mantiene por compatibilidad; el cálculo vigente es por tramos (ver
+    calcular_monto_por_tramos).
     """
     minutos_cobrables = max(1, math.ceil(minutos))
     return round(float(precio_por_hora) * minutos_cobrables / 60, 2), minutos_cobrables
+
+
+def calcular_monto_por_tramos(tramos, minutos):
+    """
+    Cobro escalonado, como un parqueo real: los primeros minutos pueden ser
+    gratis y el precio por hora sube mientras más tiempo se queda el
+    vehículo.
+
+    `tramos` es una lista de (desde_minuto, precio_por_hora) ordenada por
+    desde_minuto, tal como sale de tramos_de_tarifa(). Cada tramo rige
+    desde su minuto hasta que empieza el siguiente; el último queda
+    abierto. Ejemplo con [(0, 0), (15, 5), (60, 7), (120, 10)]:
+    los primeros 15 minutos no se cobran, del 15 al 60 se cobran a Q5 la
+    hora, del 60 al 120 a Q7, y de ahí en adelante a Q10.
+
+    Ojo: cada tramo se cobra SOLO por los minutos que caen dentro de él, no
+    se recalcula todo al precio más alto. Alguien que estuvo 2 horas paga
+    los primeros 45 minutos cobrables a Q5/h y la hora siguiente a Q7/h.
+
+    Devuelve (monto, minutos_cobrables), igual que calcular_monto.
+    """
+    minutos_cobrables = max(1, math.ceil(minutos))
+    if not tramos:
+        return 0.0, minutos_cobrables
+
+    ordenados = sorted(tramos, key=lambda tramo: tramo[0])
+    total = 0.0
+    for indice, (desde, precio) in enumerate(ordenados):
+        siguiente = ordenados[indice + 1][0] if indice + 1 < len(ordenados) else None
+        fin = minutos_cobrables if siguiente is None else min(minutos_cobrables, siguiente)
+        if fin <= desde:
+            continue
+        total += float(precio) * (fin - desde) / 60
+
+    return round(total, 2), minutos_cobrables
 
 
 def cerrar_sesion(conexion, sesion_id, hora_salida=None):
@@ -195,7 +252,16 @@ def cerrar_sesion(conexion, sesion_id, hora_salida=None):
     # estar en otro huso horario (comparar allá daba minutos inflados).
     minutos_crudos = (hora_salida - hora_entrada).total_seconds() / 60
     tarifa_id, precio_por_hora = tarifa_vigente(cursor)
-    monto, minutos = calcular_monto(precio_por_hora, minutos_crudos)
+
+    # Cobro escalonado (15 min de gracia y el precio sube por hora). Si la
+    # tarifa no tiene tramos cargados -- por ejemplo una base que todavía no
+    # corrió migrar_tarifa_por_tramos.py -- se cae de vuelta al precio plano
+    # en vez de cobrar cero.
+    tramos = tramos_de_tarifa(cursor, tarifa_id)
+    if tramos:
+        monto, minutos = calcular_monto_por_tramos(tramos, minutos_crudos)
+    else:
+        monto, minutos = calcular_monto(precio_por_hora, minutos_crudos)
 
     cursor.execute(
         "UPDATE sesiones SET hora_salida = %s, estado = 'cerrada' WHERE id = %s",
