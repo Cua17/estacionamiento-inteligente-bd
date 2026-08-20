@@ -68,6 +68,110 @@ def _agrandar(gris, ancho_minimo=ANCHO_MINIMO_PARA_OCR):
     return cv2.resize(gris, None, fx=factor, fy=factor, interpolation=cv2.INTER_CUBIC)
 
 
+# Una placa es claramente apaisada (la de Guatemala ronda 2:1). Filtrar por
+# esto es lo que separa la placa de los recuadros del parqueo dibujados en la
+# hoja de prueba, que son más altos que anchos.
+ASPECTO_MINIMO_PLACA = 1.6
+ASPECTO_MAXIMO_PLACA = 6.0
+
+# Cuántas regiones candidatas se le pasan al OCR, de la más grande a la más
+# chica. Más candidatos = más chance de acertar, pero cada uno cuesta varias
+# llamadas a Tesseract.
+MAX_CANDIDATOS = 3
+
+
+def _ordenar_esquinas(puntos):
+    """Ordena 4 puntos como arriba-izq, arriba-der, abajo-der, abajo-izq."""
+    puntos = np.array(puntos, dtype="float32").reshape(4, 2)
+    suma = puntos.sum(axis=1)
+    resta = puntos[:, 0] - puntos[:, 1]
+    return np.array([
+        puntos[np.argmin(suma)],    # arriba-izquierda: menor x+y
+        puntos[np.argmax(resta)],   # arriba-derecha:   mayor x-y
+        puntos[np.argmax(suma)],    # abajo-derecha
+        puntos[np.argmin(resta)],   # abajo-izquierda
+    ], dtype="float32")
+
+
+def enderezar(imagen, esquinas):
+    """
+    Corrige la perspectiva de un cuadrilátero y lo devuelve visto de frente.
+
+    Esto es lo que permite leer una placa que NO está perpendicular a la
+    cámara: Tesseract fue entrenado con texto derecho, y una placa
+    fotografiada en ángulo le llega con las letras estiradas de un lado y
+    comprimidas del otro. Deshacer esa deformación antes del OCR es la
+    diferencia entre leerla y no leerla.
+    """
+    orden = _ordenar_esquinas(esquinas)
+    arriba_izq, arriba_der, abajo_der, abajo_izq = orden
+    ancho = int(round(max(np.linalg.norm(arriba_der - arriba_izq),
+                          np.linalg.norm(abajo_der - abajo_izq))))
+    alto = int(round(max(np.linalg.norm(abajo_izq - arriba_izq),
+                         np.linalg.norm(abajo_der - arriba_der))))
+    if ancho < 40 or alto < 15:
+        return None
+
+    destino = np.array([[0, 0], [ancho - 1, 0], [ancho - 1, alto - 1], [0, alto - 1]],
+                       dtype="float32")
+    matriz = cv2.getPerspectiveTransform(orden, destino)
+    return cv2.warpPerspective(imagen, matriz, (ancho, alto))
+
+
+def localizar_candidatos_placa(imagen, maximo=MAX_CANDIDATOS):
+    """
+    Busca regiones con forma de placa y las devuelve ya enderezadas.
+
+    Antes el pipeline recortaba "la zona más brillante" del cuadro, y en la
+    práctica eso agarraba la hoja blanca entera del parqueo de prueba (con
+    los rótulos A1..A4 escritos a mano), no la placa: el OCR terminaba
+    leyendo "AA2" en vez de la patente. Buscar cuadriláteros con relación
+    de aspecto de placa resuelve justamente eso, y de paso da las cuatro
+    esquinas necesarias para corregir la perspectiva.
+    """
+    gris = _a_gris(imagen)
+    suave = cv2.bilateralFilter(gris, 7, 50, 50)
+    bordes = cv2.Canny(suave, 40, 140)
+    # Cerrar cortes en el contorno: un borde interrumpido no forma un
+    # cuadrilátero cerrado y se perdería el candidato.
+    bordes = cv2.dilate(bordes, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
+
+    contornos, _ = cv2.findContours(bordes, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+    alto_img, ancho_img = gris.shape[:2]
+    area_total = alto_img * ancho_img
+
+    candidatos = []
+    for contorno in contornos:
+        area = cv2.contourArea(contorno)
+        # Ni una mancha diminuta ni casi todo el cuadro (eso sería la hoja).
+        if area < area_total * 0.008 or area > area_total * 0.6:
+            continue
+
+        perimetro = cv2.arcLength(contorno, True)
+        aprox = cv2.approxPolyDP(contorno, 0.03 * perimetro, True)
+        if len(aprox) != 4 or not cv2.isContourConvex(aprox):
+            continue
+
+        # El rectángulo rotado da el aspecto REAL de la placa aunque esté
+        # inclinada; el bounding box normal la haría parecer más cuadrada.
+        (_, (ancho_r, alto_r), _) = cv2.minAreaRect(aprox)
+        if ancho_r < 1 or alto_r < 1:
+            continue
+        aspecto = max(ancho_r, alto_r) / min(ancho_r, alto_r)
+        if not ASPECTO_MINIMO_PLACA <= aspecto <= ASPECTO_MAXIMO_PLACA:
+            continue
+
+        candidatos.append((area, aprox))
+
+    candidatos.sort(key=lambda par: -par[0])
+    recortes = []
+    for _, aprox in candidatos[:maximo]:
+        recorte = enderezar(imagen, aprox)
+        if recorte is not None and recorte.size > 0:
+            recortes.append(recorte)
+    return recortes
+
+
 def recortar_zona_brillante(imagen, margen=0.06):
     """
     Busca la región más brillante y rectangular del cuadro y la recorta.
@@ -240,16 +344,29 @@ def leer_placa(imagen, corregir=True, buscar_zona=True, rapido=False):
         return ""
 
     modos = MODOS_PSM[:2] if rapido else MODOS_PSM
-    regiones = [imagen]
+
+    # Orden de las regiones a probar, de la que más acierta a la que menos:
+    #   1. Candidatos con forma de placa, ya enderezados (corrige el ángulo).
+    #   2. La zona más brillante del cuadro, como red de seguridad.
+    #   3. La imagen entera, último recurso.
+    # La 1 es la que hace la diferencia: sin ella, en un cuadro dominado por
+    # una hoja blanca el OCR terminaba leyendo el fondo en vez de la placa.
+    regiones = []
     if buscar_zona:
+        regiones.extend(localizar_candidatos_placa(
+            imagen, maximo=1 if rapido else MAX_CANDIDATOS))
         recorte = recortar_zona_brillante(imagen)
         if recorte is not None and recorte.size > 0:
-            # El recorte primero: si acertó, es la lectura más limpia.
-            regiones.insert(0, recorte)
-            if rapido:
-                regiones = [recorte]   # en vivo, solo la zona brillante
+            regiones.append(recorte)
+    regiones.append(imagen)
+
+    if rapido:
+        # En vivo conviene fallar rápido y reintentar con el cuadro
+        # siguiente, en vez de insistir mucho sobre uno solo.
+        regiones = regiones[:2]
 
     intentos = []
+    validos = Counter()
     for region in regiones:
         for binaria in variantes_binarizadas(region, rapido=rapido):
             for psm in modos:
@@ -262,9 +379,20 @@ def leer_placa(imagen, corregir=True, buscar_zona=True, rapido=False):
                 if not candidato:
                     continue
                 if formato_valido(candidato):
-                    return candidato          # lectura buena: no hace falta seguir
-                intentos.append(candidato)
+                    # No se devuelve la PRIMERA lectura con forma de placa:
+                    # una lectura equivocada puede tener forma válida igual
+                    # (ej. leer M254KLM en vez de M234KLM) y ganaba solo por
+                    # llegar primero. Se acumulan votos y se corta apenas
+                    # DOS binarizaciones distintas coinciden en lo mismo,
+                    # que es una señal mucho más fuerte.
+                    validos[candidato] += 1
+                    if validos[candidato] >= 2:
+                        return candidato
+                else:
+                    intentos.append(candidato)
 
+    if validos:
+        return validos.most_common(1)[0][0]
     if not intentos:
         return ""
     return Counter(intentos).most_common(1)[0][0]
