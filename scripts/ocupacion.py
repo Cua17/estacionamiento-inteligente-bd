@@ -24,6 +24,7 @@ import json
 from pathlib import Path
 
 import cv2
+import numpy as np
 
 ARCHIVO_CONFIG = Path(__file__).resolve().parent.parent / "config_espacios.json"
 
@@ -83,6 +84,63 @@ def evaluar_espacios(cuadro, espacios):
             "ocupado": densidad >= umbral,
             "densidad": round(densidad, 4),
             "umbral": umbral,
+        })
+    return resultados
+
+
+UMBRAL_DIFERENCIA_COLOR_POR_DEFECTO = 25.0
+
+
+def color_promedio(cuadro, region):
+    """Color BGR promedio de una región (para detección por diferencia de color)."""
+    x, y, ancho, alto = region
+    recorte = cuadro[y:y + alto, x:x + ancho]
+    if recorte.size == 0:
+        return None
+    return recorte.reshape(-1, recorte.shape[2]).mean(axis=0)
+
+
+def capturar_referencias_de_color(cuadro, espacios):
+    """
+    Color promedio de cada zona en el cuadro dado -- se llama una sola vez
+    al arrancar, con todos los espacios VACÍOS, para tener contra qué
+    comparar después. Devuelve {etiqueta: color BGR promedio}.
+    """
+    return {
+        espacio["etiqueta"]: color_promedio(cuadro, espacio["region"])
+        for espacio in espacios
+    }
+
+
+def evaluar_espacios_por_color(cuadro, espacios, referencias,
+                                umbral_diferencia=UMBRAL_DIFERENCIA_COLOR_POR_DEFECTO):
+    """
+    Detección alternativa a evaluar_espacios(): compara el color promedio de
+    cada zona contra la referencia de cuando estaba vacía, en vez de contar
+    bordes/detalle fino.
+
+    Más simple y más robusta cuando el fondo es uniforme (una hoja blanca de
+    prueba) y lo que la ocupa cambia el color de forma clara: no depende de
+    que la cámara esté perfectamente enfocada ni de que el objeto tenga
+    detalle a pequeña escala -- por eso sirve para probar rápido con
+    objetos chicos o de foco fijo. Para el parqueo real (asfalto, luz
+    variable, sombras) evaluar_espacios() sigue siendo la idea correcta;
+    hay que calibrarla ahí con fotos reales.
+    """
+    resultados = []
+    for espacio in espacios:
+        etiqueta = espacio["etiqueta"]
+        promedio = color_promedio(cuadro, espacio["region"])
+        referencia = referencias.get(etiqueta)
+        if promedio is None or referencia is None:
+            diferencia = 0.0
+        else:
+            diferencia = float(np.linalg.norm(promedio - referencia))
+        resultados.append({
+            "etiqueta": etiqueta,
+            "ocupado": diferencia >= umbral_diferencia,
+            "densidad": round(diferencia, 2),
+            "umbral": umbral_diferencia,
         })
     return resultados
 

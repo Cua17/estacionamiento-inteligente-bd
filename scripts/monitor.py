@@ -36,7 +36,13 @@ import cv2
 
 import parqueo
 from camara import abrir_camara, hay_camara_pi
-from ocupacion import EstadoEstable, cargar_config, evaluar_espacios
+from ocupacion import (
+    EstadoEstable,
+    cargar_config,
+    capturar_referencias_de_color,
+    evaluar_espacios,
+    evaluar_espacios_por_color,
+)
 from vision import formato_valido, leer_placa, leer_placa_de_archivo
 
 RAIZ = Path(__file__).resolve().parent.parent
@@ -218,6 +224,22 @@ def bucle_camara(args, conexion, espacios, zona_placa):
     if usar_pi_camera:
         registrar("Usando la cámara CSI de la Raspberry Pi (picamera2).")
     camara = abrir_camara(args.camara, usar_pi_camera=usar_pi_camera)
+
+    referencias_color = None
+    if args.por_color:
+        # Modo alternativo para demos con fondo controlado (una hoja
+        # blanca): en vez de contar bordes/detalle, compara el color de
+        # cada zona contra esta referencia de "vacío". Por eso ES
+        # OBLIGATORIO que el parqueo esté vacío en este momento -- el
+        # primer cuadro que se lea queda grabado como el "libre" contra el
+        # que se compara todo lo demás.
+        registrar("Modo --por-color: capturando referencia con el parqueo VACÍO...")
+        ok, cuadro_referencia = camara.read()
+        if not ok:
+            raise RuntimeError("No se pudo leer un cuadro de referencia de la cámara.")
+        referencias_color = capturar_referencias_de_color(cuadro_referencia, espacios)
+        registrar("Referencia capturada. A partir de ahora, cualquier cambio de color cuenta como ocupado.")
+
     estado_inicial = parqueo.estado_actual_de_espacios(conexion)
     estable = EstadoEstable(
         lecturas_para_confirmar=args.confirmaciones,
@@ -304,7 +326,10 @@ def bucle_camara(args, conexion, espacios, zona_placa):
                 continue
 
             ultimo_cuadro["imagen"] = cuadro
-            resultados = evaluar_espacios(cuadro, espacios)
+            if referencias_color is not None:
+                resultados = evaluar_espacios_por_color(cuadro, espacios, referencias_color)
+            else:
+                resultados = evaluar_espacios(cuadro, espacios)
             for resultado in resultados:
                 cambio = estable.actualizar(resultado["etiqueta"], resultado["ocupado"])
                 if cambio is not None:
@@ -369,6 +394,11 @@ def main():
                         help="Sin cámara: ocupar/liberar espacios desde el teclado")
     parser.add_argument("--confirmaciones", type=int, default=8,
                         help="Lecturas seguidas para confirmar un cambio (default: 8)")
+    parser.add_argument("--por-color", action="store_true",
+                        help="Detectar ocupación por cambio de color contra una referencia "
+                             "capturada al arrancar (con el parqueo VACÍO), en vez de por "
+                             "textura/bordes. Pensado para demos con fondo controlado (una "
+                             "hoja blanca); para el parqueo real conviene el modo por defecto.")
     args = parser.parse_args()
 
     try:
