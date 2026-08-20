@@ -128,19 +128,22 @@ def tramos_de_tarifa(cursor, tarifa_id):
     """
     Los tramos escalonados de una tarifa, ordenados por minuto de inicio.
 
-    Devuelve [(desde_minuto, precio_por_hora), ...] listo para
-    calcular_monto_por_tramos(). Si la tarifa no tiene tramos cargados,
-    devuelve lista vacía y quien llama decide qué hacer (ver cerrar_sesion:
-    cae de vuelta al precio plano, para que una base vieja sin la tabla
-    nueva siga cobrando en vez de romperse).
+    Devuelve [(desde_minuto, monto_fijo, precio_por_hora_adicional), ...]
+    listo para calcular_monto_por_tramos(). Si la tarifa no tiene tramos
+    cargados, devuelve lista vacía y quien llama decide qué hacer (ver
+    cerrar_sesion: cae de vuelta al precio plano, para que una base vieja
+    sin la tabla nueva siga cobrando en vez de romperse).
     """
     cursor.execute("""
-        SELECT desde_minuto, precio_por_hora
+        SELECT desde_minuto, monto_fijo, precio_por_hora_adicional
         FROM tarifa_tramos
         WHERE tarifa_id = %s
         ORDER BY desde_minuto
     """, (tarifa_id,))
-    return [(int(desde), float(precio)) for desde, precio in cursor.fetchall()]
+    return [
+        (int(desde), float(fijo), float(adicional))
+        for desde, fijo, adicional in cursor.fetchall()
+    ]
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -193,20 +196,29 @@ def calcular_monto(precio_por_hora, minutos):
 
 def calcular_monto_por_tramos(tramos, minutos):
     """
-    Cobro escalonado, como un parqueo real: los primeros minutos pueden ser
-    gratis y el precio por hora sube mientras más tiempo se queda el
-    vehículo.
+    Cobro por rangos con monto fijo, como se cobra en un parqueo real: no
+    se prorratea por minuto, se cae dentro de un rango y ese rango tiene su
+    precio.
 
-    `tramos` es una lista de (desde_minuto, precio_por_hora) ordenada por
-    desde_minuto, tal como sale de tramos_de_tarifa(). Cada tramo rige
-    desde su minuto hasta que empieza el siguiente; el último queda
-    abierto. Ejemplo con [(0, 0), (15, 5), (60, 7), (120, 10)]:
-    los primeros 15 minutos no se cobran, del 15 al 60 se cobran a Q5 la
-    hora, del 60 al 120 a Q7, y de ahí en adelante a Q10.
+    `tramos` es una lista de (desde_minuto, monto_fijo,
+    precio_por_hora_adicional) ordenada por desde_minuto, tal como sale de
+    tramos_de_tarifa(). Se busca el ÚLTIMO tramo cuyo desde_minuto ya se
+    alcanzó, y se cobra:
 
-    Ojo: cada tramo se cobra SOLO por los minutos que caen dentro de él, no
-    se recalcula todo al precio más alto. Alguien que estuvo 2 horas paga
-    los primeros 45 minutos cobrables a Q5/h y la hora siguiente a Q7/h.
+        monto_fijo + horas_empezadas_desde_ese_minuto * precio_por_hora_adicional
+
+    El precio adicional existe solo para el tramo abierto del final (el que
+    dice "de acá en adelante suma tanto por hora"). En los tramos del medio
+    va en cero y el cobro es plano.
+
+    Con [(0,0,0), (15,15,0), (60,35,0), (300,35,10)]:
+      - menos de 15 min -> gratis
+      - 15 a 59 min     -> Q15
+      - 1 a 5 horas     -> Q35
+      - más de 5 horas  -> Q35 + Q10 por cada hora empezada de más
+
+    Se cobra la hora empezada (ceil), igual que el minuto empezado del
+    resto del sistema: quedarse 5h01 ya cuenta como una hora extra.
 
     Devuelve (monto, minutos_cobrables), igual que calcular_monto.
     """
@@ -215,13 +227,23 @@ def calcular_monto_por_tramos(tramos, minutos):
         return 0.0, minutos_cobrables
 
     ordenados = sorted(tramos, key=lambda tramo: tramo[0])
-    total = 0.0
-    for indice, (desde, precio) in enumerate(ordenados):
-        siguiente = ordenados[indice + 1][0] if indice + 1 < len(ordenados) else None
-        fin = minutos_cobrables if siguiente is None else min(minutos_cobrables, siguiente)
-        if fin <= desde:
-            continue
-        total += float(precio) * (fin - desde) / 60
+
+    # El tramo que aplica es el último que ya arrancó. Si los minutos caen
+    # antes del primer tramo, no se cobra nada.
+    aplicable = None
+    for tramo in ordenados:
+        if minutos_cobrables >= tramo[0]:
+            aplicable = tramo
+        else:
+            break
+    if aplicable is None:
+        return 0.0, minutos_cobrables
+
+    desde, monto_fijo, precio_adicional = aplicable
+    total = float(monto_fijo)
+    if precio_adicional:
+        horas_de_mas = math.ceil((minutos_cobrables - desde) / 60)
+        total += float(precio_adicional) * horas_de_mas
 
     return round(total, 2), minutos_cobrables
 

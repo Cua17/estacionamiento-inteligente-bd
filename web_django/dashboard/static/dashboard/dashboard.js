@@ -81,14 +81,20 @@ function cobroCorrido(minutos, tarifa) {
     return (cobrables * tarifa.precio_por_hora) / 60;
   }
 
-  let total = 0;
-  tramos.forEach((tramo, i) => {
-    const siguiente = i + 1 < tramos.length ? tramos[i + 1].desde_minuto : null;
-    const fin = siguiente === null ? cobrables : Math.min(cobrables, siguiente);
-    if (fin > tramo.desde_minuto) {
-      total += (tramo.precio_por_hora * (fin - tramo.desde_minuto)) / 60;
-    }
-  });
+  // Aplica el ÚLTIMO tramo que ya arrancó: no se prorratea por minuto, se
+  // cae dentro de un rango y ese rango tiene su precio.
+  let aplicable = null;
+  for (const tramo of tramos) {
+    if (cobrables >= tramo.desde_minuto) aplicable = tramo;
+    else break;
+  }
+  if (!aplicable) return 0;
+
+  let total = aplicable.monto_fijo;
+  if (aplicable.precio_por_hora_adicional) {
+    const horasDeMas = Math.ceil((cobrables - aplicable.desde_minuto) / 60);
+    total += aplicable.precio_por_hora_adicional * horasDeMas;
+  }
   return total;
 }
 
@@ -100,15 +106,23 @@ function resumenTarifa(tarifa) {
   const tramos = tarifa.tramos || [];
   if (!tramos.length) return `${quetzales(tarifa.precio_por_hora)} por hora`;
 
+  const enTiempo = (min) => (min % 60 === 0 && min >= 60 ? `${min / 60} h` : `${min} min`);
+
   return tramos.map((tramo, i) => {
     const siguiente = i + 1 < tramos.length ? tramos[i + 1].desde_minuto : null;
     const rango = siguiente === null
-      ? `${tramo.desde_minuto}+ min`
-      : `${tramo.desde_minuto}-${siguiente} min`;
-    const precio = tramo.precio_por_hora === 0
-      ? "gratis"
-      : `${quetzales(tramo.precio_por_hora)}/h`;
-    return `${rango} ${precio}`;
+      ? `más de ${enTiempo(tramo.desde_minuto)}`
+      : `${enTiempo(tramo.desde_minuto)} a ${enTiempo(siguiente)}`;
+
+    let precio;
+    if (tramo.monto_fijo === 0 && tramo.precio_por_hora_adicional === 0) {
+      precio = "gratis";
+    } else if (tramo.precio_por_hora_adicional) {
+      precio = `${quetzales(tramo.monto_fijo)} + ${quetzales(tramo.precio_por_hora_adicional)}/hora`;
+    } else {
+      precio = quetzales(tramo.monto_fijo);
+    }
+    return `${rango}: ${precio}`;
   }).join(" · ");
 }
 

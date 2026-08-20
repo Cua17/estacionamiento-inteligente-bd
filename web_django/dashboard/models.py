@@ -55,9 +55,10 @@ class Tarifa(models.Model):
 
 class TarifaTramo(models.Model):
     """
-    Un escalón del cobro: 'desde este minuto, la hora vale tanto'.
+    Un rango de cobro: 'desde este minuto se cobra tanto'.
 
-    Rige hasta que empieza el tramo siguiente; el último queda abierto.
+    Rige hasta que empieza el tramo siguiente; el último queda abierto y
+    puede sumar un extra por cada hora empezada de más.
     Ver el cálculo en scripts/parqueo.py::calcular_monto_por_tramos.
     """
 
@@ -66,10 +67,14 @@ class TarifaTramo(models.Model):
         related_name="tramos",
     )
     desde_minuto = models.IntegerField(
-        help_text="Desde qué minuto acumulado aplica este precio (0 = desde que entra)")
-    precio_por_hora = models.DecimalField(
-        max_digits=8, decimal_places=2,
-        help_text="Precio por hora dentro de este tramo. 0.00 = gratis")
+        help_text="Desde qué minuto acumulado aplica este cobro (0 = desde que entra)")
+    monto_fijo = models.DecimalField(
+        max_digits=8, decimal_places=2, default=0,
+        help_text="Lo que se cobra si el tiempo cae en este tramo. 0.00 = gratis")
+    precio_por_hora_adicional = models.DecimalField(
+        max_digits=8, decimal_places=2, default=0,
+        help_text="Solo para el último tramo: cuánto suma cada hora empezada "
+                  "más allá del minuto de inicio. En los tramos del medio va en 0")
 
     class Meta:
         managed = False
@@ -77,9 +82,12 @@ class TarifaTramo(models.Model):
         ordering = ["desde_minuto"]
 
     def __str__(self):
-        if float(self.precio_por_hora) == 0:
+        if float(self.monto_fijo) == 0 and float(self.precio_por_hora_adicional) == 0:
             return f"desde {self.desde_minuto} min: gratis"
-        return f"desde {self.desde_minuto} min: Q{self.precio_por_hora}/hora"
+        if float(self.precio_por_hora_adicional):
+            return (f"desde {self.desde_minuto} min: Q{self.monto_fijo} + "
+                    f"Q{self.precio_por_hora_adicional} por hora de más")
+        return f"desde {self.desde_minuto} min: Q{self.monto_fijo}"
 
 
 class Sesion(models.Model):

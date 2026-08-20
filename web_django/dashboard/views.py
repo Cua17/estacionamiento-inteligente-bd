@@ -131,7 +131,11 @@ def datos_tarifa():
     # al cerrarla. Si la pantalla calculara distinto, prometería un número
     # que después no coincide con el que se guarda en la base.
     tramos = [
-        {"desde_minuto": tramo.desde_minuto, "precio_por_hora": float(tramo.precio_por_hora)}
+        {
+            "desde_minuto": tramo.desde_minuto,
+            "monto_fijo": float(tramo.monto_fijo),
+            "precio_por_hora_adicional": float(tramo.precio_por_hora_adicional),
+        }
         for tramo in tarifa.tramos.all()
     ]
     return {

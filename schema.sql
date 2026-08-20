@@ -42,12 +42,13 @@ CREATE TABLE IF NOT EXISTS tarifas (
 );
 
 -- ─────────────────────────────────────────────────────────────────────────
--- 3b) TARIFA_TRAMOS: el precio escalonado de cada tarifa.
+-- 3b) TARIFA_TRAMOS: los rangos de cobro de cada tarifa.
 --
--- Un parqueo real no cobra un precio plano: da unos minutos de gracia y
--- después sube el precio por hora mientras más tiempo se queda el vehículo.
--- Cada fila dice "desde este minuto, la hora vale tanto", y rige hasta que
--- empieza el tramo siguiente; el último queda abierto.
+-- Un parqueo real no cobra por minuto prorrateado: da unos minutos de
+-- gracia y después cobra un monto fijo según el rango en el que caiga el
+-- tiempo total. Cada fila dice "desde este minuto se cobra tanto", y rige
+-- hasta que empieza el tramo siguiente; el último queda abierto y puede
+-- sumar un extra por cada hora empezada de más.
 --
 -- Está en su propia tabla (y no como columnas de `tarifas`) porque la
 -- cantidad de tramos es variable: una tarifa puede tener dos escalones y
@@ -55,10 +56,13 @@ CREATE TABLE IF NOT EXISTS tarifas (
 -- se conservan y un cobro viejo se puede seguir explicando.
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS tarifa_tramos (
-    id                  INT           NOT NULL AUTO_INCREMENT PRIMARY KEY,
-    tarifa_id           INT           NOT NULL,
-    desde_minuto        INT           NOT NULL,   -- desde qué minuto acumulado aplica
-    precio_por_hora     DECIMAL(8,2)  NOT NULL,   -- 0.00 = tramo gratis
+    id                          INT           NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    tarifa_id                   INT           NOT NULL,
+    desde_minuto                INT           NOT NULL,  -- desde qué minuto acumulado aplica
+    monto_fijo                  DECIMAL(8,2)  NOT NULL DEFAULT 0.00,  -- 0.00 = tramo gratis
+    -- Solo para el último tramo (el abierto): cuánto suma cada hora
+    -- empezada más allá de desde_minuto. En los tramos del medio va en 0.
+    precio_por_hora_adicional   DECIMAL(8,2)  NOT NULL DEFAULT 0.00,
 
     FOREIGN KEY (tarifa_id) REFERENCES tarifas(id),
 
@@ -106,13 +110,14 @@ CREATE TABLE IF NOT EXISTS cobros (
 -- ─────────────────────────────────────────────────────────────────────────
 INSERT IGNORE INTO espacios (etiqueta) VALUES ('A1'), ('A2'), ('A3'), ('A4');
 
--- precio_por_hora queda como precio de referencia de la tarifa (el del
--- tramo principal); el cobro real se calcula con tarifa_tramos.
-INSERT IGNORE INTO tarifas (id, nombre, precio_por_hora) VALUES (1, 'Tarifa estándar', 5.00);
+-- precio_por_hora queda como precio de referencia de la tarifa; el cobro
+-- real se calcula con tarifa_tramos.
+INSERT IGNORE INTO tarifas (id, nombre, precio_por_hora) VALUES (1, 'Tarifa escalonada', 15.00);
 
--- Escalonado: 15 min de gracia, después el precio por hora va subiendo.
-INSERT IGNORE INTO tarifa_tramos (tarifa_id, desde_minuto, precio_por_hora) VALUES
-    (1,   0,  0.00),   -- primeros 15 minutos: gratis
-    (1,  15,  5.00),   -- de 15 min a 1 hora
-    (1,  60,  7.00),   -- segunda hora
-    (1, 120, 10.00);   -- de la tercera hora en adelante
+-- Rangos con monto fijo: 15 min de gracia y después se cobra por rango.
+INSERT IGNORE INTO tarifa_tramos
+    (tarifa_id, desde_minuto, monto_fijo, precio_por_hora_adicional) VALUES
+    (1,   0,  0.00,  0.00),   -- menos de 15 minutos: gratis
+    (1,  15, 15.00,  0.00),   -- de 15 a 60 minutos: Q15
+    (1,  60, 35.00,  0.00),   -- de 1 a 5 horas: Q35
+    (1, 300, 35.00, 10.00);   -- más de 5 horas: Q35 + Q10 por hora empezada de más

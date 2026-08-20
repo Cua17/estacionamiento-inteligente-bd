@@ -18,10 +18,15 @@ from django.contrib import admin
 from django.contrib.auth import views as auth_views
 from django.urls import include, path
 
+# No hay registro público a propósito: las cuentas se crean solo desde
+# /admin/ o con `python manage.py crear_operador <usuario>`. Un parqueo no
+# es un servicio al que cualquiera se da de alta solo -- quien opera el
+# sistema lo autoriza el administrador. (La app `cuentas` conserva el
+# formulario por si algún día se quiere volver a abrir; hoy no está
+# enrutado, así que no es alcanzable.)
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('login', auth_views.LoginView.as_view(template_name='registration/login.html'), name='login'),
     path('logout', auth_views.LogoutView.as_view(), name='logout'),
-    path('', include('cuentas.urls')),
     path('', include('dashboard.urls')),
 ]
