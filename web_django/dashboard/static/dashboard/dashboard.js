@@ -92,6 +92,26 @@ function cobroCorrido(minutos, tarifa) {
   return total;
 }
 
+/* Resumen legible del escalonado para la cabecera. Decir solo "Q5.00 por
+   hora" sería mentir ahora que el precio sube por tramos: alguien que ve
+   ese rótulo y se queda tres horas esperaría pagar Q15 y pagaría Q20.75. */
+function resumenTarifa(tarifa) {
+  if (!tarifa) return "sin definir";
+  const tramos = tarifa.tramos || [];
+  if (!tramos.length) return `${quetzales(tarifa.precio_por_hora)} por hora`;
+
+  return tramos.map((tramo, i) => {
+    const siguiente = i + 1 < tramos.length ? tramos[i + 1].desde_minuto : null;
+    const rango = siguiente === null
+      ? `${tramo.desde_minuto}+ min`
+      : `${tramo.desde_minuto}-${siguiente} min`;
+    const precio = tramo.precio_por_hora === 0
+      ? "gratis"
+      : `${quetzales(tramo.precio_por_hora)}/h`;
+    return `${rango} ${precio}`;
+  }).join(" · ");
+}
+
 function marcarSiCambio(clave, huella) {
   const cambio = !primeraCarga && huellas.get(clave) !== huella;
   huellas.set(clave, huella);
@@ -269,7 +289,7 @@ function pintarPie(datos) {
 
 function pintarCabecera(datos) {
   texto("folio-fecha", fechaLarga());
-  texto("folio-tarifa", datos.tarifa ? quetzales(datos.tarifa.precio_por_hora) : "sin definir");
+  texto("folio-tarifa", resumenTarifa(datos.tarifa));
   texto("saldo-libres", datos.libres);
   texto("saldo-total", datos.total);
   document.querySelector(".saldo").classList.toggle("saldo--lleno", datos.libres === 0);
