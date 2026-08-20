@@ -95,6 +95,13 @@ DATABASES = {
         # Evita repetir el saludo TLS (~2s) en cada request -- el mismo
         # problema que web/app.py resuelve a mano reusando una conexión.
         'CONN_MAX_AGE': 60,
+        # Sin esto, si la red se corta un instante (wifi inestable) la
+        # conexión reusada queda "medio muerta" y Django tarda mucho en
+        # darse cuenta -- exactamente el mismo problema que se arregló en
+        # monitor.py con ping(reconnect=True), pero del lado de Django.
+        # CONN_HEALTH_CHECKS hace un chequeo liviano antes de reusarla y la
+        # reabre sola si hace falta.
+        'CONN_HEALTH_CHECKS': True,
         'OPTIONS': {'ssl': {'ca': certifi.where()}},
     }
 }
