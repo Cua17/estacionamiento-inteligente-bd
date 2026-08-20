@@ -41,7 +41,7 @@ skill `impeccable` y sigue vigente.
 | **0. Reset de la Raspberry Pi** | ✅ Hecho — 12 de agosto |
 | **5. Cámara en la Pi** | ✅ **Hecho el 19-20 de agosto** — Camera Module v1 (OV5647) conectada y detectada. Hizo falta `dtoverlay=ov5647` explícito en `/boot/firmware/config.txt` (el auto-detect no la reconocía sola) |
 | OCR en vivo, localización + perspectiva | ✅ Hecho — ver "OCR" abajo |
-| Red del día de la demo (hotspot) | 🔲 Pendiente — runbook listo en el plan de cámara, falta ejecutarlo con el celular a mano |
+| Red del día de la demo (hotspot) | ✅ Hecho — 20 de agosto, probado de punta a punta (SSH + TiDB) con el hotspot real |
 | 8. Pruebas en el parqueo real | 🔲 Pendiente |
 | 9. Documentación y entrega final | 🔲 Pendiente |
 
@@ -81,13 +81,52 @@ arreglamos varios bugs reales, en este orden:
    revienta si la PRIMERA lectura de la cámara contradice a la base (pasó
    porque había sesiones de prueba que quedaron abiertas). Arreglado.
 
-**Lo último que quedó sin confirmar** (se cortó la sesión antes de
-probarlo): sincronizar `scripts/ocupacion.py` a la Pi con el fix del
-`KeyError`, correr `python scripts/reset_demo.py` (limpia las sesiones de
-prueba que quedaron abiertas — **irreversible**, borra sesiones/cobros/
-vehículos), reiniciar `monitor.py --sin-ventana --por-color`, y probar
-con un carrito real dejado puesto ~20 segundos (no 10) para ver si el OCR
-ya lo lee con el buffer nuevo. Seguir por ahí.
+**Continuación, misma sesión, 20 de agosto por la mañana:**
+
+- **Red del día de la demo: ✅ probada de punta a punta.** La Pi se
+  conectó al hotspot del celular del usuario (SSID "iPhone") con
+  `nmcli device wifi connect`, quedó guardada como red conocida
+  (`nmcli connection show` la lista junto a la de casa), y con laptop +
+  Pi las dos en el hotspot se confirmó SSH y conexión a TiDB Cloud
+  (`db.conectar()`) funcionando. Un detalle real que apareció: justo
+  después de cambiarse de red, el DNS de la Pi tardó unos segundos en
+  acomodarse (`Unknown MySQL server host` una vez, después funcionó) — al
+  llegar el día de la demo, darle a la Pi unos 5-10 segundos después de
+  que el hotspot esté activo antes de esperar que la base responda.
+- **Se probó mostrar el parqueo en un iPad y se descartó.** La pantalla
+  daba mucho reflejo/glare para la cámara (se veía la silueta de quien
+  sacaba la foto reflejada sobre los espacios) y el fondo oscuro salía
+  lavado por la sobreexposición. Se volvió a papel impreso, que ya sabíamos
+  que funciona sin ese problema. El PDF del iPad queda en
+  `materiales_demo/parqueo_ipad_descartado.pdf` por si se retoma con mejor
+  control de luz.
+- **Kit impreso nuevo, ya armado por el usuario**: `materiales_demo/kit_impresion.pdf`
+  (generado con `materiales_demo/generar_kit_impresion.py`). Página 1: los
+  4 espacios A1-A4, fondo blanco, **6.2cm de ancho cada uno**. Página 2: 6
+  placas para recortar (`P123ABC`, `M456DEF`, `C789GHJ`, `P456DEF`,
+  `M234KLM`, `C321XYZ`), **del mismo ancho que un espacio (6.2cm)** —
+  se probaron más chicas primero (3.4cm) y se agrandaron a propósito:
+  a 640x480 más grande es mejor para el OCR. Ya impreso, recortado, y
+  pegado a los carritos de juguete.
+
+**Lo último que quedó SIN CONFIRMAR — literal, seguir por acá:**
+
+Después del fix del `KeyError` (commit `7d83051`), se dieron los 3 pasos
+para retomar la prueba (sync de `ocupacion.py`, `reset_demo.py`,
+reiniciar `monitor.py --sin-ventana --por-color`), pero la sesión se
+desvió hacia el hotspot y el kit impreso antes de confirmar que se
+ejecutaron. Retomar exactamente así:
+
+1. Confirmar/repetir el sync: `scp -i ~/.ssh/id_ed25519_parqueo_pi scripts/ocupacion.py cua@parqueo-pi.local:~/estacionamiento-inteligente-bd/scripts/`
+2. En la Pi: `cd ~/estacionamiento-inteligente-bd/scripts && python reset_demo.py`
+   (⚠️ irreversible, borra sesiones/cobros/vehículos de prueba — es lo que
+   se quiere para arrancar limpio)
+3. Acomodar el kit impreso (ya armado) frente a la cámara, espacios vacíos
+4. `python monitor.py --sin-ventana --por-color`
+5. Poner un carrito con placa pegada, **dejarlo quieto ~20 segundos**
+   (no 10 — el buffer necesita ver varios cuadros con el vehículo
+   presente), sacarlo, revisar el log: ¿dice "placa leída -> XXXXXXX" o
+   sigue en "placa no legible"?
 
 **Antes de la presentación real** (fase 8), hay dos preguntas abiertas:
 - ¿La detección por color (`--por-color`) sirve para el parqueo real, o
