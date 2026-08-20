@@ -57,6 +57,11 @@ SEGUNDOS_ENTRE_LECTURAS = 0.15
 # Cuántos cuadros extra se intentan leer si el primero no dio una placa válida.
 INTENTOS_DE_PLACA = 12
 
+# Si una lectura de placa esperó más que esto en la cola, se descarta: el
+# vehículo de esa entrada ya no está frente a la cámara, así que leer ahora
+# daría la placa del que entró después (o ninguna).
+SEGUNDOS_PARA_DESCARTAR_OCR = 20
+
 
 def marca_de_tiempo():
     return datetime.now().strftime("%H:%M:%S")
@@ -252,17 +257,39 @@ def bucle_camara(args, conexion, espacios, zona_placa):
         f"{', '.join(ocupados_al_iniciar) if ocupados_al_iniciar else 'todos libres'}"
     )
 
-    # El OCR y la escritura en la base tardan cientos de milisegundos. Si eso
-    # corriera dentro del bucle de video, la imagen se congelaría cada vez que
-    # entra o sale un vehículo -- que es justo el momento en que uno quiere
-    # verla. Por eso el trabajo pesado se hace en un hilo aparte y el bucle
-    # de video nunca se bloquea.
+    # DOS hilos, no uno, y esto importa mucho:
+    #
+    #   - `trabajos`     -> cambios de estado (entrada/salida). Rápido y
+    #                       crítico: es lo que el tablero tiene que reflejar
+    #                       al instante.
+    #   - `trabajos_ocr` -> lectura de placas. Lento (en la Pi, hasta medio
+    #                       minuto) y "mejor esfuerzo": si falla, la sesión
+    #                       igual queda registrada como DESCONOCIDA.
+    #
+    # Antes los dos compartían un solo hilo, y el resultado era que una
+    # SALIDA detectada mientras se leía la placa de la entrada anterior se
+    # quedaba encolada hasta que el OCR terminara -- el tablero tardaba
+    # ~30 segundos en mostrar que el espacio se había liberado, aunque la
+    # cámara lo hubiera detectado al instante. Separarlos es lo que hace
+    # que el estado nunca espere al OCR.
     trabajos = queue.Queue()
+    trabajos_ocr = queue.Queue()
     ultimo_cuadro = {"imagen": None}
 
-    def trabajador():
+    def _con_conexion_viva(conexion):
         """
-        Escribe en la base los cambios que le manda el bucle de video.
+        TiDB cierra las conexiones que estuvieron inactivas un buen rato
+        (ej. mientras no entraba ni salía ningún vehículo). Sin esto, cada
+        tarea siguiente fallaba con "MySQL Connection not available" para
+        siempre, hasta reiniciar el monitor a mano.
+        """
+        conexion.ping(reconnect=True, attempts=3, delay=1)
+        return conexion
+
+    def trabajador_estado():
+        """
+        Escribe en la base los cambios de ocupación. Solo eso: nada lento
+        corre acá adentro.
 
         Nunca descarta un cambio: cada entrada y cada salida se encolan y se
         procesan en orden. (Antes se salteaban los cambios de un espacio que
@@ -278,41 +305,15 @@ def bucle_camara(args, conexion, espacios, zona_placa):
                     return
                 etiqueta, ocupado, cuadro_del_cambio = tarea
                 try:
-                    # TiDB puede cerrar una conexión que estuvo inactiva un
-                    # buen rato (ej. mientras no entraba ni salía ningún
-                    # vehículo). Sin este ping, cada tarea siguiente fallaba
-                    # con "MySQL Connection not available" para siempre,
-                    # hasta reiniciar el monitor a mano -- ping(reconnect=True)
-                    # la revive sola si hace falta, antes de usarla.
-                    conexion_hilo.ping(reconnect=True, attempts=3, delay=1)
-
+                    _con_conexion_viva(conexion_hilo)
                     inicio = time.monotonic()
-                    # El estado se escribe primero y sin esperar al OCR: el
-                    # tablero tiene que reaccionar al instante.
                     procesar_cambio(conexion_hilo, etiqueta, ocupado, cuadro_del_cambio,
                                     zona_placa, leer_placa_fn=lambda: None)
                     registrar(f"   ({(time.monotonic() - inicio) * 1000:.0f} ms hasta la base de datos)")
 
-                    # Recién después, y solo si no hay más cambios esperando,
-                    # se intenta leer la placa. Si llega otro cambio mientras
-                    # tanto, tiene prioridad: el estado importa más que la placa.
-                    #
-                    # Se usa leer_placa_por_consenso() en vez de un solo intento
-                    # sobre cuadro_del_cambio (que quedó estático en el instante
-                    # de la transición): pide varios cuadros FRESCOS a través de
-                    # ultimo_cuadro (que el bucle de video sigue actualizando) y
-                    # exige que la misma placa se repita antes de aceptarla. Un
-                    # solo intento sobre un cuadro fijo es lo que hacía que el
-                    # OCR le errara a los dígitos con cualquier frecuencia.
-                    if ocupado and trabajos.empty():
-                        placa = leer_placa_por_consenso(
-                            lambda: ultimo_cuadro["imagen"], zona_placa)
-                        if placa and parqueo.actualizar_placa_de_sesion(
-                                conexion_hilo, etiqueta, placa):
-                            registrar(f"{etiqueta}: placa leída -> {placa}")
-                        elif not placa:
-                            registrar(f"{etiqueta}: placa no legible tras varios intentos, queda DESCONOCIDA")
-                            guardar_para_diagnostico(ultimo_cuadro["imagen"], etiqueta)
+                    if ocupado:
+                        # Se delega la placa al otro hilo y se sigue de largo.
+                        trabajos_ocr.put((etiqueta, time.monotonic()))
                 except Exception as error:
                     # Un error puntual (ej. un hipo de red con la base de datos)
                     # no debe tumbar el monitor: se avisa y se sigue.
@@ -322,8 +323,49 @@ def bucle_camara(args, conexion, espacios, zona_placa):
         finally:
             conexion_hilo.close()
 
-    hilo = threading.Thread(target=trabajador, daemon=True)
+    def trabajador_ocr():
+        """
+        Lee la placa de las entradas y corrige la sesión ya abierta.
+
+        Corre en su propio hilo y con su propia conexión, así que puede
+        tardar lo que tarde sin frenar el registro de entradas y salidas.
+        """
+        conexion_hilo = parqueo.conectar_parqueo()
+        try:
+            while True:
+                tarea = trabajos_ocr.get()
+                if tarea is None:
+                    return
+                etiqueta, encolado_en = tarea
+                try:
+                    # Si mientras tanto se acumularon varias lecturas
+                    # pendientes, las viejas ya no sirven: el vehículo de
+                    # esa entrada probablemente ya se fue. Mejor saltearla y
+                    # atender la más reciente.
+                    if time.monotonic() - encolado_en > SEGUNDOS_PARA_DESCARTAR_OCR:
+                        registrar(f"{etiqueta}: lectura de placa descartada por vieja")
+                        continue
+
+                    placa = leer_placa_por_consenso(
+                        lambda: ultimo_cuadro["imagen"], zona_placa)
+                    if placa:
+                        _con_conexion_viva(conexion_hilo)
+                        if parqueo.actualizar_placa_de_sesion(conexion_hilo, etiqueta, placa):
+                            registrar(f"{etiqueta}: placa leída -> {placa}")
+                    else:
+                        registrar(f"{etiqueta}: placa no legible tras varios intentos, queda DESCONOCIDA")
+                        guardar_para_diagnostico(ultimo_cuadro["imagen"], etiqueta)
+                except Exception as error:
+                    registrar(f"ERROR leyendo la placa de '{etiqueta}': {error}")
+                finally:
+                    trabajos_ocr.task_done()
+        finally:
+            conexion_hilo.close()
+
+    hilo = threading.Thread(target=trabajador_estado, daemon=True)
     hilo.start()
+    hilo_ocr = threading.Thread(target=trabajador_ocr, daemon=True)
+    hilo_ocr.start()
 
     try:
         while True:
@@ -357,6 +399,7 @@ def bucle_camara(args, conexion, espacios, zona_placa):
                 time.sleep(SEGUNDOS_ENTRE_LECTURAS)
     finally:
         trabajos.put(None)
+        trabajos_ocr.put(None)
         camara.release()
         cv2.destroyAllWindows()
 
