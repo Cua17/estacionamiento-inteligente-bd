@@ -28,7 +28,7 @@ import argparse
 import queue
 import threading
 import time
-from collections import Counter
+from collections import Counter, deque
 from datetime import datetime
 from pathlib import Path
 
@@ -61,6 +61,12 @@ INTENTOS_DE_PLACA = 12
 # vehículo de esa entrada ya no está frente a la cámara, así que leer ahora
 # daría la placa del que entró después (o ninguna).
 SEGUNDOS_PARA_DESCARTAR_OCR = 20
+
+# Cuántos cuadros recientes se guardan para leerles la placa. A ~0.15s por
+# vuelta del bucle, 20 cuadros son unos 3 segundos de historial: alcanza
+# para cubrir desde que el vehículo aparece hasta que se confirma la
+# entrada.
+CUADROS_DE_HISTORIAL = 20
 
 
 def marca_de_tiempo():
@@ -104,8 +110,8 @@ def leer_placa_rapido(cuadro, zona_placa=None):
     return placa if formato_valido(placa) else None
 
 
-def leer_placa_por_consenso(obtener_cuadro, zona_placa, intentos=INTENTOS_DE_PLACA,
-                            coincidencias=2, intentos_completos=4):
+def leer_placa_por_consenso(cuadros, zona_placa, coincidencias=2,
+                            intentos_completos=4):
     """
     Solo da por buena una placa si la lee IGUAL en dos cuadros distintos.
 
@@ -116,20 +122,24 @@ def leer_placa_por_consenso(obtener_cuadro, zona_placa, intentos=INTENTOS_DE_PLA
     ruido: acertar dos veces el mismo error es mucho menos probable que
     acertarlo una.
 
-    Los primeros `intentos - intentos_completos` intentos usan la lectura
-    rápida (menos variantes de binarización, para no atrasar el video). Si
-    ninguno logra consenso, los últimos `intentos_completos` cambian a la
-    lectura completa sobre cuadros frescos: más lenta por intento, pero
-    mucho más probable que acierte en cuadros difíciles (poca luz, placa
-    chica). Esto ya corre en el hilo aparte, así que el video no se ve
-    afectado.
+    `cuadros` es una LISTA de cuadros ya capturados, no una forma de pedir
+    cuadros nuevos, y la diferencia es todo el asunto: el vehículo solo
+    está frente a la cámara en el momento de entrar. Cuando esta función
+    pedía cuadros en vivo, para cuando le tocaba correr (después de
+    confirmar el cambio y de escribir en la base) el vehículo muchas veces
+    ya se había ido, y el OCR terminaba leyendo el piso vacío. Ahora recibe
+    los cuadros guardados de ese momento.
+
+    Los últimos `intentos_completos` cuadros se leen con el pipeline
+    completo: más lento por cuadro, pero mucho más probable que acierte en
+    cuadros difíciles (poca luz, placa chica). Esto corre en un hilo
+    aparte, así que el video no se ve afectado.
     """
     votos = Counter()
-    intentos_rapidos = max(0, intentos - intentos_completos)
-    for numero_intento in range(intentos):
-        cuadro = obtener_cuadro()
+    intentos_rapidos = max(0, len(cuadros) - intentos_completos)
+    for numero_intento, cuadro in enumerate(cuadros):
         if cuadro is None:
-            break
+            continue
         if numero_intento < intentos_rapidos:
             placa = leer_placa_rapido(cuadro, zona_placa)
         else:
@@ -138,7 +148,6 @@ def leer_placa_por_consenso(obtener_cuadro, zona_placa, intentos=INTENTOS_DE_PLA
             votos[placa] += 1
             if votos[placa] >= coincidencias:
                 return placa
-        time.sleep(0.05)
 
     if votos:
         mejor, veces = votos.most_common(1)[0]
@@ -274,7 +283,14 @@ def bucle_camara(args, conexion, espacios, zona_placa):
     # que el estado nunca espere al OCR.
     trabajos = queue.Queue()
     trabajos_ocr = queue.Queue()
-    ultimo_cuadro = {"imagen": None}
+
+    # Historial corto de cuadros recientes. Cuando se confirma una entrada,
+    # el vehículo ya lleva un par de segundos frente a la cámara (hacen
+    # falta varias lecturas seguidas para confirmar), así que estos cuadros
+    # SÍ lo tienen. Leer la placa de acá y no del video en vivo es lo que
+    # evita que el OCR termine mirando el piso vacío porque el vehículo se
+    # fue mientras se procesaba la entrada.
+    cuadros_recientes = deque(maxlen=CUADROS_DE_HISTORIAL)
 
     def _con_conexion_viva(conexion):
         """
@@ -303,7 +319,7 @@ def bucle_camara(args, conexion, espacios, zona_placa):
                 tarea = trabajos.get()
                 if tarea is None:
                     return
-                etiqueta, ocupado, cuadro_del_cambio = tarea
+                etiqueta, ocupado, cuadro_del_cambio, cuadros_del_cambio = tarea
                 try:
                     _con_conexion_viva(conexion_hilo)
                     inicio = time.monotonic()
@@ -313,7 +329,9 @@ def bucle_camara(args, conexion, espacios, zona_placa):
 
                     if ocupado:
                         # Se delega la placa al otro hilo y se sigue de largo.
-                        trabajos_ocr.put((etiqueta, time.monotonic()))
+                        # Van los cuadros guardados del momento de la entrada:
+                        # son los que tienen el vehículo enfrente.
+                        trabajos_ocr.put((etiqueta, time.monotonic(), cuadros_del_cambio))
                 except Exception as error:
                     # Un error puntual (ej. un hipo de red con la base de datos)
                     # no debe tumbar el monitor: se avisa y se sigue.
@@ -336,7 +354,7 @@ def bucle_camara(args, conexion, espacios, zona_placa):
                 tarea = trabajos_ocr.get()
                 if tarea is None:
                     return
-                etiqueta, encolado_en = tarea
+                etiqueta, encolado_en, cuadros = tarea
                 try:
                     # Si mientras tanto se acumularon varias lecturas
                     # pendientes, las viejas ya no sirven: el vehículo de
@@ -346,15 +364,18 @@ def bucle_camara(args, conexion, espacios, zona_placa):
                         registrar(f"{etiqueta}: lectura de placa descartada por vieja")
                         continue
 
-                    placa = leer_placa_por_consenso(
-                        lambda: ultimo_cuadro["imagen"], zona_placa)
+                    placa = leer_placa_por_consenso(cuadros, zona_placa)
                     if placa:
                         _con_conexion_viva(conexion_hilo)
                         if parqueo.actualizar_placa_de_sesion(conexion_hilo, etiqueta, placa):
                             registrar(f"{etiqueta}: placa leída -> {placa}")
                     else:
                         registrar(f"{etiqueta}: placa no legible tras varios intentos, queda DESCONOCIDA")
-                        guardar_para_diagnostico(ultimo_cuadro["imagen"], etiqueta)
+                        # Se guarda el cuadro que SE INTENTÓ leer, no el de
+                        # ahora: guardar el actual mostraba el piso vacío y
+                        # no decía nada de por qué falló la lectura.
+                        guardar_para_diagnostico(cuadros[len(cuadros) // 2] if cuadros else None,
+                                                 etiqueta)
                 except Exception as error:
                     registrar(f"ERROR leyendo la placa de '{etiqueta}': {error}")
                 finally:
@@ -375,7 +396,7 @@ def bucle_camara(args, conexion, espacios, zona_placa):
                 time.sleep(1)
                 continue
 
-            ultimo_cuadro["imagen"] = cuadro
+            cuadros_recientes.append(cuadro)
             if referencias_color is not None:
                 resultados = evaluar_espacios_por_color(cuadro, espacios, referencias_color)
             else:
@@ -384,7 +405,13 @@ def bucle_camara(args, conexion, espacios, zona_placa):
                 cambio = estable.actualizar(resultado["etiqueta"], resultado["ocupado"])
                 if cambio is not None:
                     registrar(f"{resultado['etiqueta']}: {'OCUPADO' if cambio else 'LIBRE'} detectado")
-                    trabajos.put((resultado["etiqueta"], cambio, cuadro.copy()))
+                    # Se copia el historial AHORA (no se pasa el deque, que
+                    # el bucle va a seguir pisando con cuadros nuevos donde
+                    # el vehículo ya no está). Se toma uno de cada dos para
+                    # que las lecturas sean de instantes distintos y el
+                    # consenso signifique algo.
+                    instantaneas = [c.copy() for c in list(cuadros_recientes)[::-2]]
+                    trabajos.put((resultado["etiqueta"], cambio, cuadro.copy(), instantaneas))
 
             if not args.sin_ventana:
                 cv2.imshow("Monitor del parqueo  |  q=salir  p=leer placa",
