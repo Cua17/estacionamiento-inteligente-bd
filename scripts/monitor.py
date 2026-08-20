@@ -278,6 +278,14 @@ def bucle_camara(args, conexion, espacios, zona_placa):
                     return
                 etiqueta, ocupado, cuadro_del_cambio = tarea
                 try:
+                    # TiDB puede cerrar una conexión que estuvo inactiva un
+                    # buen rato (ej. mientras no entraba ni salía ningún
+                    # vehículo). Sin este ping, cada tarea siguiente fallaba
+                    # con "MySQL Connection not available" para siempre,
+                    # hasta reiniciar el monitor a mano -- ping(reconnect=True)
+                    # la revive sola si hace falta, antes de usarla.
+                    conexion_hilo.ping(reconnect=True, attempts=3, delay=1)
+
                     inicio = time.monotonic()
                     # El estado se escribe primero y sin esperar al OCR: el
                     # tablero tiene que reaccionar al instante.
