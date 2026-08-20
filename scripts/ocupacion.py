@@ -186,7 +186,13 @@ class EstadoEstable:
             self._candidato[etiqueta] = (ocupado_ahora, 0)
             return None
 
-        propuesto, veces = self._candidato[etiqueta]
+        # Con valor por defecto y no acceso directo: _confirmado viene
+        # sembrado desde la base de datos, pero _candidato arranca vacío.
+        # Si la PRIMERA lectura de la cámara ya contradice a la base (por
+        # ejemplo, la base tiene una sesión abierta de antes y el espacio
+        # en realidad está libre), acá no había todavía ninguna entrada
+        # para esa etiqueta y el monitor entero se caía con KeyError.
+        propuesto, veces = self._candidato.get(etiqueta, (ocupado_ahora, 0))
         veces = veces + 1 if propuesto == ocupado_ahora else 1
         self._candidato[etiqueta] = (ocupado_ahora, veces)
 
