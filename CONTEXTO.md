@@ -34,25 +34,119 @@ skill `impeccable` y sigue vigente.
 |---|---|
 | 1. Diseño de la base de datos | ✅ Hecho |
 | 2. Estructura del repositorio | ✅ Hecho |
-| 3. Prueba de concepto de OCR | ✅ Hecho — ver `scripts/NOTAS_OCR.md` (ojo: el 4/4 documentado ahí es contra imágenes limpias, no cámara real) |
-| 4. Detección de ocupación | ✅ Hecho — funciona con webcam, probado en vivo |
-| 6. Sesiones y facturación | ✅ Hecho |
-| 7. Dashboard web | ✅ Hecho — **migrado de Flask a Django** el 18 de agosto, con login y roles (Admin/Operador). Ver `docs/superpowers/specs/2026-08-13-migracion-django-login-roles-design.md` y `docs/superpowers/plans/2026-08-13-django-dashboard-plan.md`. Verificado en vivo contra TiDB real. `web/` (Flask) todavía existe en paralelo hasta el corte final (Tarea 8 del plan) |
+| 3. Prueba de concepto de OCR | ✅ Hecho — ver `scripts/NOTAS_OCR.md` (desactualizado: ver "OCR" abajo, se reescribió la localización) |
+| 4. Detección de ocupación | ✅ Hecho — funciona con webcam y con la cámara de la Pi |
+| 6. Sesiones y facturación | ✅ Hecho — tarifa por rangos con monto fijo (ver "Tarifas" abajo) |
+| 7. Dashboard web | ✅ Hecho — **migrado de Flask a Django**, con login y roles (Admin/Operador), sin registro público. `web/` (Flask) todavía existe en paralelo hasta el corte final |
 | **0. Reset de la Raspberry Pi** | ✅ Hecho — 12 de agosto |
-| **5. Cámara en la Pi** | 🟡 **Código listo (`scripts/camara.py`, picamera2), falta el paso físico en la Pi** — ver `docs/superpowers/plans/2026-08-13-camara-pi-y-red-demo-plan.md` |
-| OCR en vivo por consenso | ✅ Hecho — 18 de agosto, ver `docs/superpowers/plans/2026-08-13-ocr-consenso-plan.md`. Bug real encontrado y arreglado (ver sección de bugs abajo) |
-| Red del día de la demo (hotspot) | 🔲 Pendiente — runbook listo, falta ejecutarlo con el celular a mano |
+| **5. Cámara en la Pi** | ✅ **Hecho el 19-20 de agosto** — Camera Module v1 (OV5647) conectada y detectada. Hizo falta `dtoverlay=ov5647` explícito en `/boot/firmware/config.txt` (el auto-detect no la reconocía sola) |
+| OCR en vivo, localización + perspectiva | ✅ Hecho — ver "OCR" abajo |
+| Red del día de la demo (hotspot) | 🔲 Pendiente — runbook listo en el plan de cámara, falta ejecutarlo con el celular a mano |
 | 8. Pruebas en el parqueo real | 🔲 Pendiente |
 | 9. Documentación y entrega final | 🔲 Pendiente |
 
-**La única pieza de hardware que falta es conectar la cámara física a la
-Pi y probarla** (código ya escrito, sin poder verificarse desde una sesión
-sin acceso a la Pi). El resto del software (OCR con consenso, dashboard
-Django con roles) ya está implementado y probado contra la base de datos
-real.
-
 **Documento para entender todo el proyecto de punta a punta** (pensado
 para prepararse antes de la presentación): `GUIA_DE_ESTUDIO.md`.
+
+## Dónde quedamos (sesión del 19-20 de agosto) — LEER ANTES DE SEGUIR
+
+Sesión larga probando con la Pi real y carritos de juguete con placas
+pegadas (parqueo simulado en una mesa, no el real todavía). Encontramos y
+arreglamos varios bugs reales, en este orden:
+
+1. **La cámara no se detectaba** → el cable estaba sucio/mal asentado, y
+   además hacía falta `dtoverlay=ov5647` explícito (el auto-detect no
+   reconoce bien este sensor viejo). Ya anotado en el runbook.
+2. **La detección de ocupación por textura (`evaluar_espacios`) no
+   funcionaba** con carritos de juguete sobre una hoja blanca — la
+   densidad bajaba en vez de subir (el filtro de ruido borraba el detalle
+   fino del carrito, y muy cerca la cámara de foco fijo se desenfocaba).
+   Se agregó `evaluar_espacios_por_color` como alternativa (flag
+   `--por-color` en monitor.py), que compara contra una referencia de
+   "vacío" capturada al arrancar. **Para el parqueo real** (asfalto,
+   carros de tamaño real) hay que evaluar si hace falta o si la de
+   textura ya alcanza — no se probó todavía con condiciones reales.
+3. **El dashboard tardaba ~30s en reflejar una salida** → el OCR corría
+   en el mismo hilo que escribía el estado. Se separó en dos hilos.
+4. **El OCR no leía nada** → `recortar_zona_brillante` agarraba la hoja
+   blanca entera en vez de la placa. Se reescribió la localización
+   (forma + relación de aspecto) con corrección de perspectiva. Medido:
+   0/5 → 5/5 en escenas de prueba realistas (`test_scenes/`).
+5. **El OCR seguía sin leer nada, con carrito puesto 10s** → mirando las
+   fotos de `debug_placas/` se vio que el OCR estaba leyendo el cuadro
+   EN VIVO, y para cuando le tocaba correr (después de confirmar+escribir
+   el estado) el carrito ya no estaba. Se agregó un buffer de los últimos
+   ~3s de cuadros; el OCR ahora lee de ahí, no del video en vivo.
+6. **`KeyError` que tumbaba el monitor al arrancar** → `EstadoEstable`
+   revienta si la PRIMERA lectura de la cámara contradice a la base (pasó
+   porque había sesiones de prueba que quedaron abiertas). Arreglado.
+
+**Lo último que quedó sin confirmar** (se cortó la sesión antes de
+probarlo): sincronizar `scripts/ocupacion.py` a la Pi con el fix del
+`KeyError`, correr `python scripts/reset_demo.py` (limpia las sesiones de
+prueba que quedaron abiertas — **irreversible**, borra sesiones/cobros/
+vehículos), reiniciar `monitor.py --sin-ventana --por-color`, y probar
+con un carrito real dejado puesto ~20 segundos (no 10) para ver si el OCR
+ya lo lee con el buffer nuevo. Seguir por ahí.
+
+**Antes de la presentación real** (fase 8), hay dos preguntas abiertas:
+- ¿La detección por color (`--por-color`) sirve para el parqueo real, o
+  hace falta volver a la de textura (`evaluar_espacios`, sin el flag)
+  porque el fondo ya no es una hoja blanca controlada? Probar los dos ahí.
+- Si el OCR sigue sin leer alguna placa incluso con el buffer nuevo,
+  quedó pendiente implementar "guardar la mejor lectura como sin
+  confirmar" en vez de solo DESCONOCIDA — se lo prometí al usuario si el
+  buffer no alcanzaba.
+
+## OCR de placas
+
+Reescrito el 19-20 de agosto (`scripts/vision.py`):
+- `localizar_candidatos_placa()` busca cuadriláteros con relación de
+  aspecto 1.6-6.0 (descarta los recuadros del parqueo, que son más altos
+  que anchos) en vez de "la zona más brillante del cuadro".
+- `enderezar()` corrige la perspectiva con las 4 esquinas del candidato.
+- `leer_placa()` vota entre binarizaciones (2 coincidencias) en vez de
+  devolver la primera lectura con forma de placa válida.
+- Banco de pruebas nuevo que imita la demo real (no recortes limpios):
+  `scripts/generar_escenas_prueba.py` + `scripts/test_escenas.py`.
+  Medido: 0/5 → 5/5 aciertos, 3924ms → ~400ms por lectura.
+- En `monitor.py`: el OCR corre en su propio hilo (no bloquea el estado)
+  y lee de un buffer de los últimos ~20 cuadros (~3s), no del video en
+  vivo — ver punto 5 de "Dónde quedamos" arriba.
+
+## Tarifas
+
+Cambiaron dos veces en la misma sesión. La vigente ahora es **por rangos
+con monto fijo** (no precio por hora prorrateado):
+
+```
+menos de 15 min   gratis
+15 a 60 min       Q15
+1 a 5 horas       Q35
+más de 5 horas    Q35 + Q10 por cada hora empezada de más
+```
+
+Estos números son un punto de partida razonable puesto por el usuario,
+**no son tarifas oficiales verificadas de ningún parqueo de Guatemala**.
+Se cambian desde `/admin/` → Tarifas (crear una tarifa nueva cierra la
+vigente sola, vía `TarifaAdmin.save_model`) sin tocar código.
+
+Cálculo en `scripts/parqueo.py::calcular_monto_por_tramos` (al cerrar la
+sesión) y espejado en `dashboard/static/dashboard/dashboard.js::cobroCorrido`
+(estimado en vivo). Verificado que dan lo mismo en los 900 minutos de 1
+min a 15 h — si se toca uno, hay que tocar el otro igual.
+
+Tabla `tarifa_tramos`: `(tarifa_id, desde_minuto, monto_fijo,
+precio_por_hora_adicional)`. El `precio_por_hora_adicional` solo se usa en
+el último tramo (el abierto); en los del medio va en 0.
+
+## Cuentas del dashboard Django
+
+**No hay registro público** (decisión explícita del usuario, 19-20 de
+agosto): `/registro` no existe, no hay enlace en el login. Las cuentas se
+crean con `python manage.py crear_operador <usuario>` (rol Operador) o
+desde `/admin/` a mano (para promover a Admin). La cuenta Admin del
+usuario ya existe, no se tocó.
 
 ## Infraestructura
 
