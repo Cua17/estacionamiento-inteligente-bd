@@ -145,6 +145,120 @@ def evaluar_espacios_por_color(cuadro, espacios, referencias,
     return resultados
 
 
+UMBRAL_TEXTURA_POR_DEFECTO = 0.030
+
+# Cuánto se ACHICA la región antes de medirla, por lado.
+#
+# Se mide solo el corazón del espacio, no sus bordes. El recuadro impreso
+# tiene líneas negras gruesas justo en el borde de la región, y una línea
+# negra es lo que más cambia el promedio de color y la densidad de textura
+# de toda la escena. Si la hoja se corre unos milímetros -- lo que pasa
+# cada vez que alguien estira el brazo por encima de la mesa -- esa línea
+# entra o sale de la región y el espacio se marca ocupado sin que haya
+# ningún vehículo. Pasó de verdad: la foto guardada en el instante de la
+# detección mostraba la hoja VACÍA, corrida ~15 px respecto de la
+# referencia.
+#
+# Midiendo hacia adentro, el borde puede bailar sin que la medición se
+# entere: dentro solo hay papel blanco. Un vehículo igual cae en el centro
+# del espacio, así que no se pierde detección (medido: el carrito daba
+# textura 0.09-0.11 contra un umbral de 0.03, sobra margen).
+INSET_HORIZONTAL = 0.28
+INSET_VERTICAL = 0.10
+
+
+def region_de_medicion(region, inset_x=INSET_HORIZONTAL, inset_y=INSET_VERTICAL):
+    """Encoge una región hacia su centro, para medir lejos de sus bordes."""
+    x, y, ancho, alto = region
+    dx, dy = int(ancho * inset_x), int(alto * inset_y)
+    return (x + dx, y + dy, max(1, ancho - 2 * dx), max(1, alto - 2 * dy))
+
+
+def densidad_de_textura(cuadro, region):
+    """
+    Densidad de bordes/detalle de una región, con el mismo preparado que
+    evaluar_espacios().
+
+    Filtra el cuadro entero y después recorta, no al revés. Se probó lo
+    contrario (recortar primero para filtrar menos píxeles, buscando bajar
+    la temperatura de la Pi) y medido resultó MÁS LENTO: 4.40 ms contra
+    3.73 ms por vuelta. OpenCV procesa el cuadro completo en una sola
+    pasada muy eficiente, y cuatro llamadas chicas cuestan más en
+    sobrecarga por llamada de lo que ahorran en píxeles. El costo real de
+    CPU de la demo no está acá (son ~4 ms) sino en Tesseract.
+    """
+    return densidad_de_region(preparar(cuadro), region)
+
+
+def capturar_referencias_completas(cuadro, espacios):
+    """
+    Referencia de "vacío" con las DOS medidas: color promedio y densidad de
+    textura. Se llama una sola vez al arrancar, con los espacios vacíos.
+    """
+    procesado = preparar(cuadro)
+    referencias = {}
+    for espacio in espacios:
+        medida = region_de_medicion(espacio["region"])
+        referencias[espacio["etiqueta"]] = {
+            "color": color_promedio(cuadro, medida),
+            "textura": densidad_de_region(procesado, medida),
+        }
+    return referencias
+
+
+def evaluar_espacios_combinado(cuadro, espacios, referencias,
+                               umbral_color=UMBRAL_DIFERENCIA_COLOR_POR_DEFECTO,
+                               umbral_textura=UMBRAL_TEXTURA_POR_DEFECTO):
+    """
+    Ocupado = cambió el COLOR **y** cambió la TEXTURA respecto del vacío.
+
+    Por qué hacen falta las dos y no alcanza con subir el umbral de color:
+    medido en la Pi con el kit impreso, la sombra de una persona inclinándose
+    sobre la mesa daba diferencias de color de 28 a 93, y un carrito de
+    verdad daba 100-111. Los rangos SE SOLAPAN, así que ningún umbral sobre
+    el color solo puede separarlos -- hay que mirar otra característica.
+
+    La textura es esa característica. Una sombra oscurece la zona pero no
+    dibuja nada: los bordes que había siguen estando y no aparecen nuevos,
+    porque el umbral adaptativo de preparar() compara cada píxel con sus
+    vecinos y por eso es (casi) inmune a un cambio parejo de iluminación. Un
+    vehículo, en cambio, mete contorno, ruedas y el texto de la placa dentro
+    de la región: la densidad de bordes se mueve mucho.
+
+    Se mide el cambio ABSOLUTO de textura, no "más textura que un umbral":
+    un vehículo puede tapar las líneas negras del recuadro impreso y hacer
+    BAJAR la densidad. Lo que delata al vehículo es que la textura cambie,
+    para cualquier lado; lo que delata a la sombra es que no cambie.
+    """
+    procesado = preparar(cuadro)
+    resultados = []
+    for espacio in espacios:
+        etiqueta = espacio["etiqueta"]
+        referencia = referencias.get(etiqueta) or {}
+        medida = region_de_medicion(espacio["region"])
+
+        promedio = color_promedio(cuadro, medida)
+        referencia_color = referencia.get("color")
+        if promedio is None or referencia_color is None:
+            dif_color = 0.0
+        else:
+            dif_color = float(np.linalg.norm(promedio - referencia_color))
+
+        textura = densidad_de_region(procesado, medida)
+        referencia_textura = referencia.get("textura")
+        dif_textura = 0.0 if referencia_textura is None else abs(textura - referencia_textura)
+
+        resultados.append({
+            "etiqueta": etiqueta,
+            "ocupado": dif_color >= umbral_color and dif_textura >= umbral_textura,
+            "densidad": round(dif_color, 2),
+            "textura": round(dif_textura, 4),
+            "umbral": umbral_color,
+            "umbral_textura": umbral_textura,
+        })
+    return resultados
+
+
 class EstadoEstable:
     """
     Filtro anti-parpadeo.

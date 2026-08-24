@@ -152,23 +152,55 @@ def localizar_candidatos_placa(imagen, maximo=MAX_CANDIDATOS):
         if len(aprox) != 4 or not cv2.isContourConvex(aprox):
             continue
 
-        # El rectángulo rotado da el aspecto REAL de la placa aunque esté
-        # inclinada; el bounding box normal la haría parecer más cuadrada.
+        # Prefiltro barato y SIN orientación: descarta astillas larguísimas,
+        # pero deja pasar tanto apaisados como parados. La decisión de
+        # verdad se toma más abajo, ya enderezado.
         (_, (ancho_r, alto_r), _) = cv2.minAreaRect(aprox)
         if ancho_r < 1 or alto_r < 1:
             continue
-        aspecto = max(ancho_r, alto_r) / min(ancho_r, alto_r)
-        if not ASPECTO_MINIMO_PLACA <= aspecto <= ASPECTO_MAXIMO_PLACA:
+        if max(ancho_r, alto_r) / min(ancho_r, alto_r) > ASPECTO_MAXIMO_PLACA:
             continue
 
         candidatos.append((area, aprox))
 
-    candidatos.sort(key=lambda par: -par[0])
+    # Se ordena por área PERO penalizando lo que está lejos del centro. En
+    # un recorte centrado en un espacio de parqueo, la placa de ESE espacio
+    # es la que cae al medio; una placa del espacio vecino que se asome por
+    # el borde no debe ganarle.
+    centro_x, centro_y = ancho_img / 2, alto_img / 2
+    diagonal = float(np.hypot(ancho_img, alto_img)) or 1.0
+
+    def _puntaje(par):
+        area, aprox = par
+        momento = aprox.reshape(-1, 2).mean(axis=0)
+        distancia = float(np.hypot(momento[0] - centro_x, momento[1] - centro_y))
+        return area / (1.0 + 4.0 * distancia / diagonal)
+
+    candidatos.sort(key=_puntaje, reverse=True)
+
     recortes = []
-    for _, aprox in candidatos[:maximo]:
+    for _, aprox in candidatos:
+        if len(recortes) >= maximo:
+            break
         recorte = enderezar(imagen, aprox)
-        if recorte is not None and recorte.size > 0:
-            recortes.append(recorte)
+        if recorte is None or recorte.size == 0:
+            continue
+
+        # EL filtro que importa, y va acá y no arriba: enderezar() ya
+        # identificó cuál lado es el de arriba, así que ancho/alto tiene
+        # orientación de verdad. Con max/min (como estaba antes) un
+        # recuadro de parqueo de 142x288 daba aspecto 2.03 -- idéntico al
+        # de una placa de 145x80 -- así que pasaba el filtro, y como los
+        # recuadros son MÁS GRANDES en área se quedaban con los tres cupos
+        # de candidatos y la placa real nunca llegaba a Tesseract. Con la
+        # división orientada, ese recuadro da 0.49 y queda descartado.
+        alto_r, ancho_r = recorte.shape[:2]
+        if alto_r < 1:
+            continue
+        if not ASPECTO_MINIMO_PLACA <= ancho_r / alto_r <= ASPECTO_MAXIMO_PLACA:
+            continue
+
+        recortes.append(recorte)
     return recortes
 
 

@@ -33,15 +33,16 @@ from datetime import datetime
 from pathlib import Path
 
 import cv2
+import numpy as np
 
 import parqueo
 from camara import abrir_camara, hay_camara_pi
 from ocupacion import (
     EstadoEstable,
     cargar_config,
-    capturar_referencias_de_color,
+    capturar_referencias_completas,
     evaluar_espacios,
-    evaluar_espacios_por_color,
+    evaluar_espacios_combinado,
 )
 from vision import formato_valido, leer_placa, leer_placa_de_archivo
 
@@ -54,13 +55,22 @@ NEGRO = (0, 0, 0)
 
 SEGUNDOS_ENTRE_LECTURAS = 0.15
 
+# Cada cuánto imprime las diferencias de color con --depurar-color.
+SEGUNDOS_ENTRE_REPORTES = 2.0
+
 # Cuántos cuadros extra se intentan leer si el primero no dio una placa válida.
 INTENTOS_DE_PLACA = 12
 
 # Si una lectura de placa esperó más que esto en la cola, se descarta: el
 # vehículo de esa entrada ya no está frente a la cámara, así que leer ahora
 # daría la placa del que entró después (o ninguna).
-SEGUNDOS_PARA_DESCARTAR_OCR = 20
+#
+# TIENE que ser mayor que SEGUNDOS_MAXIMOS_POR_PLACA (más abajo, 28s): si
+# fuera menor, una entrada en cola se descartaría por "vieja" antes de que
+# la de adelante termine de procesarse, aunque el vehículo siguiera ahí
+# esperando su turno -- que es exactamente el bug que este número existe
+# para evitar. 40s = 28s del que está adelante + margen real de espera.
+SEGUNDOS_PARA_DESCARTAR_OCR = 40
 
 # Cuántos cuadros recientes se guardan para leerles la placa. A ~0.15s por
 # vuelta del bucle, 20 cuadros son unos 3 segundos de historial: alcanza
@@ -75,6 +85,28 @@ def marca_de_tiempo():
 
 def registrar(mensaje):
     print(f"[{marca_de_tiempo()}] {mensaje}")
+
+
+# Cuánto se agranda la región de un espacio antes de buscarle la placa,
+# como fracción de su ancho/alto por cada lado.
+#
+# Hace falta porque en el kit impreso la placa mide LO MISMO de ancho que
+# el espacio (6.2cm los dos): si el vehículo no queda perfectamente
+# centrado, la placa se sale del rectángulo y el recorte la corta. Pasó de
+# verdad -- el recorte guardado para diagnóstico mostraba "?123ABC", con la
+# P cortada contra el borde, y por eso ninguna lectura calzaba con el
+# formato de 7 caracteres.
+MARGEN_ZONA_PLACA = 0.5
+
+
+def ensanchar_region(region, ancho_cuadro, alto_cuadro, margen=MARGEN_ZONA_PLACA):
+    """Agranda una región un `margen` por lado, sin salirse del cuadro."""
+    x, y, ancho, alto = region
+    dx, dy = int(ancho * margen), int(alto * margen * 0.25)
+    x0, y0 = max(0, x - dx), max(0, y - dy)
+    x1 = min(ancho_cuadro, x + ancho + dx)
+    y1 = min(alto_cuadro, y + alto + dy)
+    return [x0, y0, max(1, x1 - x0), max(1, y1 - y0)]
 
 
 def leer_placa_del_cuadro(cuadro, zona_placa=None):
@@ -110,8 +142,31 @@ def leer_placa_rapido(cuadro, zona_placa=None):
     return placa if formato_valido(placa) else None
 
 
+# Techo de tiempo para leer UNA placa. Existe para que una lectura difícil
+# no le robe el turno a la siguiente: la cola del OCR es de un solo hilo, y
+# una lectura que falla prueba todas las combinaciones (candidatos ×
+# binarizaciones × modos de Tesseract), que en la Pi llegó a tardar 35
+# segundos. En ese rato entró un vehículo a OTRO espacio y su lectura se
+# descartó por vieja sin haberse intentado nunca: un falso positivo
+# terminaba costando la placa de una entrada legítima. Con el techo, la
+# lectura difícil se rinde y libera el hilo.
+#
+# El número sale de medir en la Pi real, no de la laptop (que es mucho más
+# rápida): UN cuadro sin candidatos con forma de placa -- cae al camino de
+# respaldo (buscar en toda la imagen) -- tarda 9.3s ahí. Con el techo
+# anterior (8s) cortaba a la mitad del PRIMER cuadro, sin darle tiempo ni a
+# terminar un intento. 28s da margen para ~2-3 cuadros difíciles seguidos
+# (el caso real que se quiere resolver) y sigue siendo mucho menor que los
+# 35s sin techo que causaban el problema original. Una lectura que SÍ
+# encuentra la placa es rápida (~1s, medido) porque corta apenas dos
+# binarizaciones coinciden -- este techo casi nunca se activa en el caso
+# feliz, solo en el difícil.
+SEGUNDOS_MAXIMOS_POR_PLACA = 28.0
+
+
 def leer_placa_por_consenso(cuadros, zona_placa, coincidencias=2,
-                            intentos_completos=4):
+                            intentos_completos=4,
+                            limite_segundos=SEGUNDOS_MAXIMOS_POR_PLACA):
     """
     Solo da por buena una placa si la lee IGUAL en dos cuadros distintos.
 
@@ -136,10 +191,14 @@ def leer_placa_por_consenso(cuadros, zona_placa, coincidencias=2,
     aparte, así que el video no se ve afectado.
     """
     votos = Counter()
+    vence_en = time.monotonic() + limite_segundos
     intentos_rapidos = max(0, len(cuadros) - intentos_completos)
     for numero_intento, cuadro in enumerate(cuadros):
         if cuadro is None:
             continue
+        if time.monotonic() > vence_en:
+            registrar(f"   se acabó el tiempo de lectura tras {numero_intento} cuadros")
+            break
         if numero_intento < intentos_rapidos:
             placa = leer_placa_rapido(cuadro, zona_placa)
         else:
@@ -233,11 +292,53 @@ def procesar_cambio(conexion, etiqueta, ocupado, cuadro, zona_placa,
         registrar(resultado)
 
 
+SEGUNDOS_DE_CALENTAMIENTO = 3.0
+CUADROS_PARA_LA_REFERENCIA = 10
+
+
+def capturar_cuadro_de_referencia(camara,
+                                  segundos_calentamiento=SEGUNDOS_DE_CALENTAMIENTO,
+                                  cuadros=CUADROS_PARA_LA_REFERENCIA):
+    """
+    Cuadro de "parqueo vacío" contra el que se compara todo en --por-color.
+
+    NO se puede usar el primer cuadro que entrega la cámara. La OV5647 (y
+    cualquier cámara con auto-exposición y balance de blancos automáticos)
+    arranca con ganancias por defecto y tarda unos segundos en converger:
+    los primeros cuadros salen más oscuros y con otro tinte que los que
+    vendrán después. Si la referencia se toma de ahí, cuando el AE/AWB se
+    acomoda cambia el color de TODO el cuadro, la diferencia contra la
+    referencia se dispara sin que haya entrado ningún vehículo, y los
+    espacios empiezan a marcarse OCUPADO solos (pasó de verdad: A1
+    oscilando OCUPADO/LIBRE con el parqueo vacío).
+
+    Por eso: primero se descartan cuadros durante unos segundos para que la
+    cámara se estabilice, y recién después se toma la referencia como la
+    MEDIANA de varios cuadros -- la mediana ignora el ruido del sensor y
+    cualquier cuadro suelto que haya salido raro.
+    """
+    fin_calentamiento = time.monotonic() + segundos_calentamiento
+    while time.monotonic() < fin_calentamiento:
+        camara.read()
+
+    capturados = []
+    for _ in range(cuadros):
+        ok, cuadro = camara.read()
+        if ok and cuadro is not None:
+            capturados.append(cuadro)
+
+    if not capturados:
+        raise RuntimeError("No se pudo leer un cuadro de referencia de la cámara.")
+
+    return np.median(np.stack(capturados), axis=0).astype(np.uint8)
+
+
 def bucle_camara(args, conexion, espacios, zona_placa):
     usar_pi_camera = args.camara_pi or hay_camara_pi()
     if usar_pi_camera:
         registrar("Usando la cámara CSI de la Raspberry Pi (picamera2).")
-    camara = abrir_camara(args.camara, usar_pi_camera=usar_pi_camera)
+    camara = abrir_camara(args.camara, ancho=args.ancho, alto=args.alto,
+                          usar_pi_camera=usar_pi_camera)
 
     referencias_color = None
     if args.por_color:
@@ -248,11 +349,9 @@ def bucle_camara(args, conexion, espacios, zona_placa):
         # primer cuadro que se lea queda grabado como el "libre" contra el
         # que se compara todo lo demás.
         registrar("Modo --por-color: capturando referencia con el parqueo VACÍO...")
-        ok, cuadro_referencia = camara.read()
-        if not ok:
-            raise RuntimeError("No se pudo leer un cuadro de referencia de la cámara.")
-        referencias_color = capturar_referencias_de_color(cuadro_referencia, espacios)
-        registrar("Referencia capturada. A partir de ahora, cualquier cambio de color cuenta como ocupado.")
+        cuadro_referencia = capturar_cuadro_de_referencia(camara)
+        referencias_color = capturar_referencias_completas(cuadro_referencia, espacios)
+        registrar("Referencia capturada. Ocupado = cambia el color Y la textura (la sombra sola no basta).")
 
     estado_inicial = parqueo.estado_actual_de_espacios(conexion)
     estable = EstadoEstable(
@@ -281,6 +380,24 @@ def bucle_camara(args, conexion, espacios, zona_placa):
     # ~30 segundos en mostrar que el espacio se había liberado, aunque la
     # cámara lo hubiera detectado al instante. Separarlos es lo que hace
     # que el estado nunca espere al OCR.
+    proximo_reporte = 0.0
+
+    # Dónde buscar la placa de cada espacio. El vehículo que acaba de entrar
+    # a A3 está, por definición, dentro del rectángulo de A3: recortar ahí
+    # es muchísimo mejor que buscar en el cuadro entero.
+    #
+    # Sin esto el OCR nunca leyó una sola placa en la Pi. Con `zona_placa`
+    # en None (la config generada con --rejilla no trae entrada "PLACA"),
+    # leer_placa() recibía los 640x480 completos, donde la placa impresa es
+    # papel blanco sobre la hoja blanca del parqueo: el localizador por
+    # contorno casi no ve ese borde blanco-sobre-blanco, y la red de
+    # seguridad por zona brillante se queda con la hoja entera. Tesseract
+    # terminaba leyendo los rótulos "A1 A2 A3 A4" y ninguna placa.
+    # Recortando la región del espacio, la placa pasa de ser una manchita
+    # del cuadro a ocupar buena parte del recorte, y _agrandar() la lleva a
+    # un tamaño que Tesseract sí puede leer.
+    region_por_espacio = {e["etiqueta"]: e["region"] for e in espacios}
+
     trabajos = queue.Queue()
     trabajos_ocr = queue.Queue()
 
@@ -364,7 +481,13 @@ def bucle_camara(args, conexion, espacios, zona_placa):
                         registrar(f"{etiqueta}: lectura de placa descartada por vieja")
                         continue
 
-                    placa = leer_placa_por_consenso(cuadros, zona_placa)
+                    zona = zona_placa
+                    if not zona and cuadros is not None and len(cuadros):
+                        alto_c, ancho_c = cuadros[0].shape[:2]
+                        region = region_por_espacio.get(etiqueta)
+                        if region:
+                            zona = ensanchar_region(region, ancho_c, alto_c)
+                    placa = leer_placa_por_consenso(cuadros, zona)
                     if placa:
                         _con_conexion_viva(conexion_hilo)
                         if parqueo.actualizar_placa_de_sesion(conexion_hilo, etiqueta, placa):
@@ -374,8 +497,16 @@ def bucle_camara(args, conexion, espacios, zona_placa):
                         # Se guarda el cuadro que SE INTENTÓ leer, no el de
                         # ahora: guardar el actual mostraba el piso vacío y
                         # no decía nada de por qué falló la lectura.
-                        guardar_para_diagnostico(cuadros[len(cuadros) // 2] if cuadros else None,
-                                                 etiqueta)
+                        fallido = cuadros[0] if cuadros else None
+                        guardar_para_diagnostico(fallido, etiqueta)
+                        # Y además EL RECORTE que se le pasó al OCR: es lo
+                        # único que contesta "¿la placa se veía legible ahí
+                        # adentro?", que es la pregunta que importa cuando
+                        # falla la lectura.
+                        if fallido is not None and zona:
+                            x, y, ancho, alto = zona
+                            guardar_para_diagnostico(fallido[y:y + alto, x:x + ancho],
+                                                     f"{etiqueta}_recorte")
                 except Exception as error:
                     registrar(f"ERROR leyendo la placa de '{etiqueta}': {error}")
                 finally:
@@ -398,9 +529,26 @@ def bucle_camara(args, conexion, espacios, zona_placa):
 
             cuadros_recientes.append(cuadro)
             if referencias_color is not None:
-                resultados = evaluar_espacios_por_color(cuadro, espacios, referencias_color)
+                resultados = evaluar_espacios_combinado(
+                    cuadro, espacios, referencias_color,
+                    umbral_color=args.umbral_color,
+                    umbral_textura=args.umbral_textura,
+                )
             else:
                 resultados = evaluar_espacios(cuadro, espacios)
+
+            # Diagnóstico: imprime la diferencia real de cada espacio contra
+            # su referencia. Sirve para elegir el umbral mirando números en
+            # vez de a ojo -- con el parqueo vacío todas deberían quedar
+            # bien por debajo del umbral, y con un vehículo puesto, bien
+            # por encima.
+            if args.depurar_color and time.monotonic() >= proximo_reporte:
+                proximo_reporte = time.monotonic() + SEGUNDOS_ENTRE_REPORTES
+                registrar("   " + "  ".join(
+                    f"{r['etiqueta']} col={r['densidad']:6.2f} tex={r.get('textura', 0):.3f}"
+                    f"{'*' if r['ocupado'] else ' '}"
+                    for r in resultados
+                ) + f"  (umbrales col>={args.umbral_color} y tex>={args.umbral_textura})")
             for resultado in resultados:
                 cambio = estable.actualizar(resultado["etiqueta"], resultado["ocupado"])
                 if cambio is not None:
@@ -410,7 +558,22 @@ def bucle_camara(args, conexion, espacios, zona_placa):
                     # el vehículo ya no está). Se toma uno de cada dos para
                     # que las lecturas sean de instantes distintos y el
                     # consenso signifique algo.
-                    instantaneas = [c.copy() for c in list(cuadros_recientes)[::-2]]
+                    #
+                    # OJO: solo se toman los últimos `lecturas_para_confirmar`
+                    # cuadros del historial, NO todo el deque. La confirmación
+                    # de EstadoEstable garantiza que esos últimos N cuadros
+                    # tuvieron el mismo veredicto (ocupado) N veces seguidas
+                    # -- son los únicos de los que se puede asegurar que el
+                    # vehículo ya estaba ahí. El resto del historial (hasta
+                    # CUADROS_DE_HISTORIAL, más largo que la ventana mínima de
+                    # confirmación) puede ser de ANTES de que el vehículo
+                    # llegara. Pasarlo entero contaminaba tanto el diagnóstico
+                    # guardado como la votación del OCR con cuadros de la
+                    # mesa vacía (visto en vivo: el .png guardado para
+                    # revisar no tenía ningún carrito, con el objeto puesto
+                    # y detectado hacía más de 30 segundos).
+                    recientes = list(cuadros_recientes)[-estable.lecturas_para_confirmar:]
+                    instantaneas = [c.copy() for c in recientes[::-2]]
                     trabajos.put((resultado["etiqueta"], cambio, cuadro.copy(), instantaneas))
 
             if not args.sin_ventana:
@@ -477,6 +640,25 @@ def main():
                              "capturada al arrancar (con el parqueo VACÍO), en vez de por "
                              "textura/bordes. Pensado para demos con fondo controlado (una "
                              "hoja blanca); para el parqueo real conviene el modo por defecto.")
+    parser.add_argument("--depurar-color", action="store_true",
+                        help="Imprimir cada 2s la diferencia de color medida en cada espacio "
+                             "contra su referencia. Para elegir el umbral con números reales.")
+    parser.add_argument("--umbral-color", type=float, default=25.0,
+                        help="Cuánto tiene que cambiar el color para contar como ocupado (default: 25)")
+    parser.add_argument("--umbral-textura", type=float, default=0.030,
+                        help="Cuánto tiene que cambiar la textura para contar como ocupado "
+                             "(default: 0.030). Es lo que distingue un vehículo de una sombra.")
+    # 1296x972, no 640x480. Medido con la placa real frente a la cámara: a
+    # 640x480 la placa ocupa ~80 px de ancho, el localizador no encuentra
+    # NINGÚN candidato y cada intento de lectura tarda 6-14 s buscando a
+    # ciegas. A 1296x972 la misma placa ocupa ~160 px, aparece 1 candidato y
+    # la lectura baja a ~650 ms. Subir más no ayuda: a 2592x1944 vuelve a
+    # empeorar (9-17 s y lecturas basura), así que 1296x972 es el punto
+    # justo, no simplemente "lo más alto posible".
+    parser.add_argument("--ancho", type=int, default=1296,
+                        help="Ancho de captura (default: 1296)")
+    parser.add_argument("--alto", type=int, default=972,
+                        help="Alto de captura (default: 972)")
     args = parser.parse_args()
 
     try:
