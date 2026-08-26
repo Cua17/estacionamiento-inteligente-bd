@@ -136,7 +136,7 @@ TIME_ZONE = 'America/Guatemala'
 USE_I18N = True
 
 # Las horas se guardan en hora local de la máquina que corre el monitor
-# (ver decisiones de diseño en CONTEXTO.md/README.md) -- comparar con
+# (ver decisiones de diseño en README.md) -- comparar con
 # datetimes "aware" complicaría esa convención sin necesidad.
 USE_TZ = False
 

@@ -1,7 +1,7 @@
 /*
   Pantallas de cuenta (login, registro): extienden dashboard.css con lo
   mínimo para un formulario. Reusan las variables de color y tipografía
-  ya definidas ahí (ver DESIGN.md) -- no redefinen nada propio.
+  ya definidas ahí (ver README.md) -- no redefinen nada propio.
 */
 
 .hoja--angosta {

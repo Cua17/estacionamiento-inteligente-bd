@@ -9,8 +9,3 @@
 - **`generar_kit_impresion.py`** — el script que lo generó (`reportlab`).
   Correrlo de nuevo regenera `kit_impresion.pdf` si hace falta ajustar
   algo (cambiar las placas, el tamaño, etc.).
-- **`parqueo_ipad_descartado.pdf`** — la primera versión, pensada para
-  mostrar en un iPad (fondo oscuro tipo asfalto). Se probó y se descartó:
-  la pantalla del iPad daba mucho reflejo/glare para la cámara de foco
-  fijo de la Pi. Queda por si en algún momento se quiere retomar con
-  mejor control de luz.

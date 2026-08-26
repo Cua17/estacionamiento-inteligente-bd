@@ -29,7 +29,7 @@ class SesionAdmin(admin.ModelAdmin):
     list_filter = ["estado"]
 
     # Solo lectura: abrir/cerrar sesiones es responsabilidad exclusiva de
-    # parqueo.py (ver principio de diseño en CONTEXTO.md) -- el panel no
+    # parqueo.py (ver decisiones de diseño en README.md) -- el panel no
     # debe poder tocar esto a mano y desincronizarlo de la cámara.
     def has_add_permission(self, request):
         return False
@@ -86,7 +86,7 @@ class TarifaAdmin(admin.ModelAdmin):
 
     def save_model(self, request, obj, form, change):
         """
-        La tarifa nunca se borra, se cierra (ver CONTEXTO.md): al crear
+        La tarifa nunca se borra, se cierra (ver README.md): al crear
         una fila nueva sin vigente_hasta, se le pone vigente_hasta=ahora a
         la que estaba vigente antes, para que un cobro viejo se siga
         pudiendo explicar con la tarifa que regía ese día.
