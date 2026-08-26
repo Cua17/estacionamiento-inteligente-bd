@@ -200,6 +200,48 @@ Editor** web como gestor de la base de datos — el equivalente a phpMyAdmin.
 | Conexión remota | Sí, cifrada con TLS |
 | Respaldo institucional | PingCAP, empresa establecida; TiDB es un proyecto open source con +40k estrellas en GitHub |
 
+## Buenas prácticas de base de datos aplicadas
+
+- **Normalización.** `tarifa_tramos` vive en su propia tabla y no como
+  columnas fijas de `tarifas` porque la cantidad de tramos de cobro es
+  variable entre tarifas — evita columnas repetidas y datos redundantes.
+- **Integridad referencial.** Toda relación entre tablas está declarada como
+  `FOREIGN KEY` en `schema.sql` (`tarifa_tramos.tarifa_id`,
+  `sesiones.placa`, `sesiones.espacio_id`, `cobros.sesion_id`,
+  `cobros.tarifa_id`): la base rechaza una fila huérfana, no depende de que
+  el código nunca se equivoque.
+- **Restricciones de unicidad más allá de la llave primaria.**
+  `espacios.etiqueta UNIQUE`, `cobros.sesion_id UNIQUE` (una sesión genera
+  como máximo un cobro) y `tarifa_tramos (tarifa_id, desde_minuto) UNIQUE`
+  (dos tramos de una misma tarifa no pueden empezar en el mismo minuto).
+- **Tipos de datos según el dominio.** `DECIMAL` para todo monto en
+  quetzales (nunca `FLOAT`, que introduce error de redondeo en dinero),
+  `ENUM` para estados de dominio cerrado (`libre`/`ocupado`,
+  `activa`/`cerrada`), `TIMESTAMP` con `DEFAULT CURRENT_TIMESTAMP` (y
+  `ON UPDATE` en `espacios`) para auditoría automática sin lógica de
+  aplicación.
+- **Índices dirigidos por el patrón de consulta real**, no puestos a priori:
+  cada índice de `schema.sql` tiene su comentario explicando qué consulta
+  acelera (ver la tabla de índices en "Base de datos" arriba).
+- **Historial no destructivo.** Las tarifas y sus tramos nunca se eliminan,
+  se cierran con `vigente_hasta` — cualquier cobro histórico se puede seguir
+  explicando con la tarifa que regía ese día.
+- **Consultas parametrizadas en toda la capa de datos.** El código Python usa
+  siempre placeholders (`cursor.execute("... WHERE id = %s", (id,))`), nunca
+  concatenación de strings dentro de una consulta; el dashboard Django pasa
+  por el ORM. Cero superficie de inyección SQL.
+- **Control de concurrencia explícito.** `autocommit=True` documentado en
+  `db.py` para evitar que una conexión reusada quede leyendo una foto vieja
+  de la base bajo aislamiento `REPEATABLE READ` (ver "Concurrencia y
+  resiliencia" en el historial técnico).
+- **Separación de responsabilidades de acceso a datos.** Un único componente
+  (`parqueo.py`) escribe en la base; el resto del sistema (dashboard,
+  reportes) solo lee — reduce la superficie donde puede romperse la
+  consistencia de los datos.
+- **Manejo seguro de credenciales.** Nunca en el código ni en el historial de
+  git: variables de entorno en local (`.env`, gitignored) y GitHub Secrets
+  cifrados en la nube (ver "Manejo de credenciales" abajo).
+
 ## Decisiones de diseño que vale la pena explicar
 
 - **La tarifa nunca se borra, se cierra.** Cambiar el precio inserta una
