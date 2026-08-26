@@ -36,7 +36,7 @@ sensores por espacio:
 - **Costo de entrada bajo.** Un sistema de barrera con boletera y sensores
   individuales por espacio requiere hardware dedicado por cada punto de
   control. Este sistema reemplaza todo eso con una cámara y un equipo de
-  cómputo de placa reducida (~US$50-80), lo que lo pone al alcance de
+  cómputo de placa reducida (~Q400-Q650), lo que lo pone al alcance de
   parqueos que hoy no llevan ningún control digital.
 - **Dato adicional que un sistema de barrera no genera.** Al identificar cada
   vehículo por placa, la base de datos permite análisis que un sistema de

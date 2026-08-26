@@ -8,7 +8,9 @@ para recortar y pegarle a cada uno.
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.pdfgen import canvas
 
-RUTA_SALIDA = r"C:\Users\jdcua\AppData\Local\Temp\claude\C--Users-jdcua-OneDrive-Universidad-2026---Ciclo-2-Manejo-de-Base-de-Datos\39c20d57-3627-4756-8523-6b68d13ad0bd\scratchpad\kit_impresion.pdf"
+import os
+
+RUTA_SALIDA = os.path.join(os.path.dirname(__file__), "kit_impresion.pdf")
 
 ANCHO, ALTO = landscape(A4)  # 841.89 x 595.27 pt
 NEGRO = (0.08, 0.08, 0.08)

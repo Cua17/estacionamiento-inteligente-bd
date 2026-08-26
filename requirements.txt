@@ -8,8 +8,8 @@ opencv-python==4.10.0.84
 pytesseract==0.3.13
 Pillow==11.0.0
 
-# Dashboard web (Flask -- se retira cuando el panel Django quede
-# verificado y confirmado con el usuario, ver Tarea 8 del plan de Django)
+# Dashboard web (Flask -- versión original, sin autenticación; se mantiene
+# en paralelo hasta confirmar el reemplazo definitivo por el panel Django)
 Flask==3.1.0
 
 # Dashboard web (Django) -- PyMySQL en vez de mysqlclient para no
